@@ -24,7 +24,8 @@ body {
 .tag { color: #5a647a; margin: 4px 0 20px; }
 
 /* ---------- work-order (SAP) search ---------- */
-.wo { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 22px; }
+.wo, .profile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 22px; }
+.profile .muted { font-weight: 400; color: #889; font-size: 13px; }
 .wolabel { display: block; font-weight: 600; color: #2a3350; margin-bottom: 8px; }
 .worow { display: flex; gap: 8px; flex-wrap: wrap; }
 .woinput {
@@ -142,6 +143,17 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .checkgroup button.on.OK { background: #2f9e57; color: #fff; border-color: #2f9e57; }
 .checkgroup button.on.Fail { background: #cf4242; color: #fff; border-color: #cf4242; }
 .checkgroup button.on { background: #8a93a6; color: #fff; }
+
+/* tri-state OK/Fail/N/A tap cell */
+.statuscell {
+  width: 100%; height: 100%; padding: 0; border-radius: 3px; font-size: 12px; font-weight: 700;
+  border: 1px solid var(--line); background: rgba(255,255,255,.92); color: #9aa3b2; line-height: 1;
+}
+.statuscell.OK { background: #2f9e57; color: #fff; border-color: #2f9e57; }
+.statuscell.Fail { background: #cf4242; color: #fff; border-color: #cf4242; }
+.statuscell.NA { background: #8a93a6; color: #fff; border-color: #8a93a6; }
+.statuscell.blank { color: #b3bac6; }
+.statuscell:disabled { opacity: .9; }
 
 .signbtn { width: 100%; height: 100%; background: #eef2fb; border: 1px dashed var(--blue-2); color: var(--blue); font-size: 12px; }
 .sigdone {

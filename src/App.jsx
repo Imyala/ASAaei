@@ -7,21 +7,26 @@ import {
   cacheDoc, getCachedDoc, exportTemplate, importTemplateJson, findTemplateByDocKey,
 } from './store.js'
 import { searchWorkOrder, searchDocumentCentre } from './sap.js'
+import { getProfile, setProfile, applyProfile } from './profile.js'
 
 // ---- field defaults (sizes are fractions of the page) --------------------
 const DEFAULT_SIZE = {
   text: { wPct: 0.28, hPct: 0.028 },
   dropdown: { wPct: 0.28, hPct: 0.028 },
+  status: { wPct: 0.1, hPct: 0.028 },
   checkgroup: { wPct: 0.34, hPct: 0.028 },
   signature: { wPct: 0.26, hPct: 0.08 },
 }
 const TOOL_LABEL = {
   select: 'Select / Move',
   text: 'Text field',
+  status: 'OK / Fail / N/A',
   dropdown: 'Dropdown',
-  checkgroup: 'OK / Fail / N/A',
   signature: 'Signature',
 }
+// Tri-state tap control: blank → OK → Fail → N/A → blank.
+const STATUS_CYCLE = ['', 'OK', 'Fail', 'N/A']
+const nextStatus = (v) => STATUS_CYCLE[(STATUS_CYCLE.indexOf(v) + 1) % STATUS_CYCLE.length]
 
 let idCounter = 1
 const nextId = () => `f${idCounter++}`
@@ -61,6 +66,11 @@ export default function App() {
   const [appliedTemplate, setAppliedTemplate] = useState('') // name of an auto-applied layout
   const [selectedPages, setSelectedPages] = useState(new Set()) // page indices to fill
   const [showPages, setShowPages] = useState(false)
+  const [profile, setProfileState] = useState(getProfile())
+  const updateProfile = (patch) => {
+    const p = { ...profile, ...patch }
+    setProfileState(p); setProfile(p)
+  }
 
   // work-order (SAP) search
   const [woInput, setWoInput] = useState('')
@@ -126,6 +136,8 @@ export default function App() {
       applied = match.name; tId = match.id
       await cacheDoc(match.id, name, bytes)
     }
+    // Fill the tech's own recurring fields (name, SAP ID, date) up front.
+    fields = applyProfile(fields, getProfile())
     setActiveTemplateId(tId)
     setAppliedTemplate(applied)
     await showBytesInEditor(bytes, name, {
@@ -431,6 +443,16 @@ export default function App() {
           )}
         </section>
 
+        <section className="profile">
+          <label className="wolabel">Your details <span className="muted">— auto-filled into every form (name, SAP ID, date)</span></label>
+          <div className="worow">
+            <input className="woinput" placeholder="Your name" value={profile.name || ''}
+              onChange={(e) => updateProfile({ name: e.target.value })} />
+            <input className="woinput" placeholder="SAP ID" value={profile.sapId || ''}
+              onChange={(e) => updateProfile({ sapId: e.target.value })} />
+          </div>
+        </section>
+
         <section className="actions">
           <button className="big primary" onClick={() => pickFile('new')}>
             ＋ Open form<small>Open a PDF/Word doc — recognised forms open ready to fill</small>
@@ -664,6 +686,13 @@ function FieldView({ field: f, mode, tool, locked, selected, onSelect, onChange,
           <option value="">— select —</option>
           {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
+      )}
+      {f.type === 'status' && (
+        <button className={'statuscell ' + (f.value ? f.value.replace('/', '') : 'blank')}
+          disabled={readOnly} title="Tap: OK → Fail → N/A"
+          onClick={() => onChange({ value: nextStatus(f.value) })}>
+          {f.value || '–'}
+        </button>
       )}
       {f.type === 'checkgroup' && (
         <div className="checkgroup">

@@ -39,6 +39,10 @@ npm run preview  # serve the built version to try on other devices on your netwo
   — then drops you into fill mode. Word docs are read from their table structure; PDFs use their
   embedded form fields when present, otherwise the table/details are reconstructed from the PDF
   text. (Detection is best-effort; the saved-layout recognition above is the reliable path.)
+- **Tap OK / Fail / N/A:** status cells are a single tap-cycle — blank → **OK** → **Fail** →
+  **N/A** → blank — so a whole column is a few taps, no dropdowns.
+- **Profile autofill:** set your name + SAP ID once on the home screen; every form opens with your
+  name, SAP ID and today's date already filled in.
 - **Page picker:** long procedures have many reading pages before the fillable ones. The **Pages**
   button lets you keep only the pages you fill; the app defaults to the pages that have fields.
   Your selection is saved with the template.

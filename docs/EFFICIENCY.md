@@ -5,14 +5,26 @@ roughly in order of time saved per dollar of effort.
 
 ## Shipped
 
-- **Open ready to fill.** A form is recognised by its document number (`AEI 3.4106`). Save a
-  layout once and every future open of that form — by file or by work order — re-applies it and
-  lands in fill mode.
-- **Auto-detect fields** (Word + PDF): OK/Fail/N/A dropdowns in status columns, text fields for
-  Remarks and details blocks, signature blocks.
+- **Detection runs on every open** — so a *new version you've never seen* is still auto-filled;
+  the app finds fields by their labels/headers, which survive a re-layout. (Word + PDF: OK/Fail/N/A
+  status columns, Remarks, details blocks like Site name/SAP ID/Signature.)
+- **Open ready to fill.** A form is also recognised by its document number (`AEI 3.4106`); save a
+  layout once and future opens re-apply it. (Fallback for forms detection can't fully read.)
+- **Tap OK / Fail / N/A** tri-state cells (blank → OK → Fail → N/A), no dropdowns.
+- **Profile autofill**: name + SAP ID + today's date filled in automatically on open.
 - **Page picker**: skip the reading pages, fill only the pages that matter.
 - **Work-order search** (with the `server/` middleware): enter a WO → pull the form → open it
   prefilled.
+
+## The version-drift problem (important)
+
+Engineers re-issue the AEI forms often, so a saved layout's fixed coordinates can go stale. Two
+defences, in order:
+1. **Anchor-based detection every open** (shipped) — fields are found from the current document's
+   text each time, so they move with the layout.
+2. **Anchor-based templates** (next) — store a saved layout as "a text field belongs next to the
+   label *Site name*", not "at x=200,y=715", and re-resolve positions from the current document on
+   open. This keeps saved layouts working across versions. Highest-value robustness upgrade.
 
 ## High value, low effort — do next
 

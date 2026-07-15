@@ -1,7 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
 import { PDFDocument } from 'pdf-lib'
-import { isStatusToken, isRemarksToken, OK_FAIL_NA, norm } from './fieldClassify.js'
+import { isStatusToken, isRemarksToken, norm } from './fieldClassify.js'
 import { extractIdentity } from './docId.js'
 
 // Field labels we recognise in a details block (label → value on the same row).
@@ -72,8 +72,8 @@ async function detectAcroForm(bytes) {
         const opts = safe(() => field.getOptions()) || []
         out.push({ ...base, type: 'dropdown', options: opts.length ? opts : [...OK_FAIL_NA] })
       } else if (kind === 'PDFCheckBox' || kind === 'PDFRadioGroup') {
-        // Approximate a tick/choice control as an OK/Fail/N/A dropdown.
-        out.push({ ...base, type: 'dropdown', options: [...OK_FAIL_NA] })
+        // Approximate a tick/choice control as an OK/Fail/N/A tri-state cell.
+        out.push({ ...base, type: 'status', options: [] })
       }
     }
   }
@@ -191,7 +191,7 @@ function detectPageGrid(items, pw, ph, pageIndex) {
     for (const col of cols) {
       const occupied = line.tokens.some((t) => t.xr > col.xLeft - 4 && t.x < col.xRight + 4)
       if (occupied) continue
-      out.push(mkField('dropdown', pageIndex, col.cx - colW / 2, rowTop, colW, rowH, pw, ph, [...OK_FAIL_NA], 'Result'))
+      out.push(mkField('status', pageIndex, col.cx - colW / 2, rowTop, colW, rowH, pw, ph, [], 'Result'))
     }
     // remarks column: text field spanning to the right margin, if empty
     if (remarksLeft != null && remarksRight - remarksLeft > 30) {

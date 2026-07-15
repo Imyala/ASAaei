@@ -1,7 +1,7 @@
 import mammoth from 'mammoth/mammoth.browser.js'
 import html2canvas from 'html2canvas'
 import { PDFDocument } from 'pdf-lib'
-import { classifyHeader, norm, OK_FAIL_NA } from './fieldClassify.js'
+import { classifyHeader, norm } from './fieldClassify.js'
 import { detectPdfFields, sniffPdfIdentity } from './pdfFields.js'
 import { extractIdentity } from './docId.js'
 
@@ -73,14 +73,14 @@ export function detectTableFields(holder) {
         const page = Math.floor((y + r.height / 2) / A4_H_PX)
         const yInPage = y - page * A4_H_PX
         const field = {
-          type: role === 'status' ? 'dropdown' : 'text',
+          type: role === 'status' ? 'status' : 'text',
           page,
           xPct: clampPct((x + pad) / A4_W_PX),
           yPct: clampPct((yInPage + pad) / A4_H_PX),
           wPct: clampPct((r.width - pad * 2) / A4_W_PX),
           hPct: clampPct((r.height - pad * 2) / A4_H_PX),
           label: norm(header[ci]) || rowLabel || (role === 'status' ? 'Result' : 'Detail'),
-          options: role === 'status' ? [...OK_FAIL_NA] : [],
+          options: [],
           value: '',
           auto: true,
         }
