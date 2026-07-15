@@ -6,7 +6,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 // works with no connection after the first visit. Note: a service worker needs
 // the app served over http(s) — offline mode does not work from a file:// path.
 export default defineConfig({
-  base: '/',
+  // GitHub Pages serves project sites from /<repo>/ — set via BASE_PATH in CI.
+  // Defaults to '/' for local dev.
+  base: process.env.BASE_PATH || '/',
   plugins: [
     react(),
     VitePWA({
