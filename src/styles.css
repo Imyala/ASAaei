@@ -1,0 +1,113 @@
+:root {
+  --blue: #2a3d73;
+  --blue-2: #3b57a6;
+  --bg: #eef1f6;
+  --line: #d3d9e6;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: #1c2330;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ---------- landing ---------- */
+.landing { max-width: 620px; margin: 8vh auto; padding: 24px; text-align: center; }
+.landing h1 { font-size: 44px; color: var(--blue); margin: 0; letter-spacing: 1px; }
+.tag { color: #5a647a; margin-top: 4px; }
+.card {
+  display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+  background: #fff; border: 1px solid var(--line); border-radius: 14px;
+  padding: 28px; margin: 24px 0;
+}
+.hint { color: #667; font-size: 14px; line-height: 1.5; }
+.hint code { background: #e3e8f2; padding: 1px 5px; border-radius: 4px; }
+
+.btn, button {
+  font: inherit; cursor: pointer; border: 1px solid var(--line);
+  background: #fff; color: #26304a; padding: 9px 14px; border-radius: 9px;
+}
+.btn.primary, button.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---------- app shell ---------- */
+.app { display: flex; flex-direction: column; height: 100%; }
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  background: #fff; border-bottom: 1px solid var(--line); padding: 8px 12px;
+  position: sticky; top: 0; z-index: 20;
+}
+.group { display: flex; align-items: center; gap: 6px; }
+.group.right { margin-left: auto; }
+.brand { color: var(--blue); font-size: 18px; }
+.file { color: #667; font-size: 13px; }
+.modes button, .tools button { padding: 6px 10px; font-size: 13px; }
+.modes button.on, .tools button.on { background: var(--blue-2); color: #fff; border-color: var(--blue-2); }
+.locked-badge { color: #7a4; font-weight: 600; }
+
+.busy { background: #fff7d6; padding: 6px 12px; border-bottom: 1px solid #eaddae; font-size: 14px; }
+.hintbar { background: #e8f0ff; padding: 6px 12px; font-size: 14px; color: #2a3d73; }
+
+/* ---------- stage ---------- */
+.stage { flex: 1; display: flex; overflow: hidden; }
+.pagescroll { flex: 1; overflow: auto; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.pagewrap { width: min(820px, 100%); }
+.page {
+  position: relative; width: 100%; background: #fff;
+  box-shadow: 0 3px 14px rgba(20,30,60,.16); border-radius: 2px; overflow: hidden;
+}
+.page img { display: block; width: 100%; height: 100%; user-select: none; }
+
+/* ---------- fields ---------- */
+.field { position: absolute; }
+.field.movable { cursor: move; touch-action: none; }
+.field .ghost {
+  display: flex; align-items: center; width: 100%; height: 100%; padding: 0 4px;
+  font-size: 12px; color: #35507e; background: rgba(120,160,240,.16);
+  border: 1px dashed #6f8fd6; border-radius: 3px; overflow: hidden; white-space: nowrap;
+}
+.field.selected .ghost { background: rgba(120,160,240,.30); border-style: solid; }
+.field.signature .ghost { background: rgba(120,140,220,.18); }
+
+.ctl {
+  width: 100%; height: 100%; border: 1px solid #9fb2d8; border-radius: 3px;
+  padding: 0 4px; font-size: 13px; background: rgba(255,255,255,.9);
+}
+.ctl:disabled { background: rgba(238,241,246,.85); color: #222; border-style: solid; }
+
+.checkgroup { display: flex; gap: 3px; width: 100%; height: 100%; }
+.checkgroup button {
+  flex: 1; padding: 0; font-size: 11px; border-radius: 3px; background: rgba(255,255,255,.9);
+}
+.checkgroup button.on.OK { background: #2f9e57; color: #fff; border-color: #2f9e57; }
+.checkgroup button.on.Fail { background: #cf4242; color: #fff; border-color: #cf4242; }
+.checkgroup button.on { background: #8a93a6; color: #fff; }
+
+.signbtn { width: 100%; height: 100%; background: #eef2fb; border: 1px dashed var(--blue-2); color: var(--blue); font-size: 12px; }
+.sigdone {
+  width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center;
+  padding: 2px 6px; background: #f5f7ff; border: 1px solid var(--blue-2); border-radius: 3px; overflow: hidden;
+}
+.sigdone b { color: var(--blue); font-size: 13px; line-height: 1.1; white-space: nowrap; }
+.sigdone small { color: #667; font-size: 10px; }
+
+/* ---------- panel ---------- */
+.panel {
+  width: 260px; background: #fff; border-left: 1px solid var(--line); padding: 16px;
+  overflow: auto; display: flex; flex-direction: column; gap: 12px;
+}
+.panel h3 { margin: 0; color: var(--blue); }
+.panel label { display: flex; flex-direction: column; font-size: 13px; color: #445; gap: 4px; }
+.panel input, .panel textarea { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; }
+.sizerow { display: flex; gap: 10px; }
+.sizerow label { flex: 1; }
+.danger { background: #cf4242; color: #fff; border-color: #cf4242; }
+.tip { font-size: 12px; color: #889; margin: 0; }
+
+@media (max-width: 720px) {
+  .panel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 30; box-shadow: -4px 0 16px rgba(0,0,0,.15); }
+  .toolbar { gap: 6px 10px; }
+  .tools { width: 100%; overflow-x: auto; }
+}
