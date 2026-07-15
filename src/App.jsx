@@ -6,7 +6,7 @@ import {
   listTemplates, loadTemplate, saveTemplate, deleteTemplate,
   cacheDoc, getCachedDoc, exportTemplate, importTemplateJson,
 } from './store.js'
-import { searchWorkOrder } from './sap.js'
+import { searchWorkOrder, searchDocumentCentre } from './sap.js'
 
 // ---- field defaults (sizes are fractions of the page) --------------------
 const DEFAULT_SIZE = {
@@ -168,11 +168,26 @@ export default function App() {
   }
 
   // ---- work-order (SAP) search -------------------------------------------
+  // Look up the work order in SAP, then automatically search the Document
+  // Centre for its form and open it (already prefilled). Falls back to showing
+  // details / matches if the form can't be auto-opened.
   const searchWO = async () => {
     setWoNotice(''); setWoResult(null)
     setWoBusy(true)
     try {
-      setWoResult(await searchWorkOrder(woInput))
+      const wo = await searchWorkOrder(woInput)
+      setWoResult(wo)
+      if (wo.documentQuery) {
+        const docs = await searchDocumentCentre(wo.documentQuery)
+        if (docs.length) {
+          setWoResult({ ...wo, documents: docs })
+          await openWorkOrderDoc({ number: wo.number, documentUrl: docs[0].url, documentName: docs[0].fileName })
+          return
+        }
+        setWoNotice(`No matching form found in the Document Centre for WO ${wo.number}.`)
+      } else {
+        setWoNotice(`WO ${wo.number} has no linked form to search for.`)
+      }
     } catch (err) {
       setWoNotice(err.code === 'NOT_CONFIGURED' ? 'not-configured' : (err.message || 'Search failed.'))
     } finally {
@@ -346,10 +361,10 @@ export default function App() {
           </div>
           {woNotice === 'not-configured' && (
             <div className="wonotice">
-              <b>SAP search isn’t connected yet.</b> This is the planned entry point: enter a work
-              order and the app looks it up in SAP, then pulls its details and document
-              automatically. It needs a small in-network service that exposes SAP (BAPI/OData) —
-              see <code>docs/ARCHITECTURE.md</code> §8.
+              <b>SAP search isn’t connected yet.</b> When it’s on, you enter a work order and the
+              app looks it up in SAP, automatically finds the matching form in the Document Centre,
+              and opens it prefilled. It needs the small in-network service in <code>server/</code>
+              pointed at SAP + the Document Centre — see <code>docs/ARCHITECTURE.md</code> §8.
             </div>
           )}
           {woNotice && woNotice !== 'not-configured' && <div className="wonotice err">{woNotice}</div>}
@@ -357,11 +372,18 @@ export default function App() {
             <div className="wocard">
               <div className="tplmeta">
                 <b>WO {woResult.number}</b>
-                <small>{[woResult.description, woResult.status].filter(Boolean).join(' · ')}</small>
+                <small>{[woResult.description, woResult.equipment, woResult.status].filter(Boolean).join(' · ')}</small>
               </div>
-              {woResult.documentUrl
-                ? <button className="primary" onClick={() => openWorkOrderDoc(woResult)}>Open document</button>
-                : <small className="empty">No document linked to this work order.</small>}
+              {woResult.documents?.length ? (
+                <div className="woactions">
+                  {woResult.documents.slice(0, 3).map((d, i) => (
+                    <button key={i} className={i === 0 ? 'primary' : ''}
+                      onClick={() => openWorkOrderDoc({ number: woResult.number, documentUrl: d.url, documentName: d.fileName })}>
+                      {i === 0 ? 'Open ' : ''}{d.documentNumber || d.title || d.fileName}
+                    </button>
+                  ))}
+                </div>
+              ) : <small className="empty">No form linked to this work order.</small>}
             </div>
           )}
         </section>

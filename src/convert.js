@@ -1,6 +1,8 @@
 import mammoth from 'mammoth/mammoth.browser.js'
 import html2canvas from 'html2canvas'
 import { PDFDocument } from 'pdf-lib'
+import { classifyHeader, norm, OK_FAIL_NA } from './fieldClassify.js'
+import { detectPdfFields } from './pdfFields.js'
 
 // A4 in CSS pixels (~96 dpi) and in PDF points.
 const A4_W_PX = 794
@@ -9,7 +11,7 @@ const A4_W_PT = 595.28
 const A4_H_PT = 841.89
 
 // ---------------------------------------------------------------------------
-// Auto field detection
+// Auto field detection (Word docs)
 // ---------------------------------------------------------------------------
 // Word documents keep their real table structure, so before we flatten the doc
 // to an image we walk every table and decide, cell by cell, what the tech is
@@ -18,27 +20,7 @@ const A4_H_PT = 841.89
 //     an OK/Fail/N/A dropdown
 //   • Remarks / Comments columns and blank label→value cells -> a text field
 // The blank cells become pre-placed fields so the tech just fills, no layout.
-
-const RX = {
-  remarks: /remark|comment|note|observation|action|finding/i,
-  status: /\b(ok\s*\/?\s*fail|pass\s*\/?\s*fail|result|status|condition|inspect|check)\b|\bok\b|\bfail\b|\bn\/?a\b/i,
-  // maintenance frequency codes: 1M 3M 6M 12M 1Y, or single D/W/M/Q/Y
-  freq: /^(?:\d{1,2}\s*[dwmqy]|[dwmqy])$/i,
-  textish: /model|serial|barcode|calibrat|reading|value|measure|number|no\.?$|name|hours|pressure|temp|date|site|order|plan|cert|sheet/i,
-}
-
-const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
-
-// Classify a column from its header text. Returns 'status' | 'text' | ''.
-function classifyHeader(text) {
-  const t = norm(text)
-  if (!t) return ''
-  if (RX.remarks.test(t)) return 'text'
-  if (RX.freq.test(t.replace(/\s/g, ''))) return 'status'
-  if (RX.status.test(t)) return 'status'
-  if (RX.textish.test(t)) return 'text'
-  return ''
-}
+// (PDFs are handled separately in pdfFields.js.)
 
 // Walk the laid-out document (`holder`) and return pre-placed field definitions.
 // Coordinates are page-relative fractions, matching the field model used by the
@@ -97,7 +79,7 @@ export function detectTableFields(holder) {
           wPct: clampPct((r.width - pad * 2) / A4_W_PX),
           hPct: clampPct((r.height - pad * 2) / A4_H_PX),
           label: norm(header[ci]) || rowLabel || (role === 'status' ? 'Result' : 'Detail'),
-          options: role === 'status' ? ['OK', 'Fail', 'N/A'] : [],
+          options: role === 'status' ? [...OK_FAIL_NA] : [],
           value: '',
           auto: true,
         }
@@ -167,10 +149,21 @@ export async function docxToPdf(arrayBuffer) {
 }
 
 // Route any uploaded file to PDF bytes plus any auto-detected fields.
-// PDFs pass through untouched (no structure to read, so no auto fields yet).
+// • .docx  -> converted here, fields read from the Word table structure.
+// • .pdf   -> passed through; fields read from the PDF (AcroForm or text grid).
 export async function fileToPdfBytes(file) {
   const buf = await file.arrayBuffer()
-  if (/\.pdf$/i.test(file.name)) return { bytes: new Uint8Array(buf), autoFields: [] }
+  if (/\.pdf$/i.test(file.name)) {
+    const bytes = new Uint8Array(buf)
+    let autoFields = []
+    try {
+      autoFields = await detectPdfFields(bytes)
+    } catch (err) {
+      // Detection is best-effort — never block opening the document over it.
+      console.warn('PDF field auto-detection failed:', err)
+    }
+    return { bytes, autoFields }
+  }
   if (/\.docx$/i.test(file.name)) return await docxToPdf(buf)
   throw new Error('Unsupported file type. Please use a PDF or Word (.docx) file.')
 }

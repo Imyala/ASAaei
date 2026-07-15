@@ -38,6 +38,8 @@ body {
 .wonotice code { background: #e3e8f2; padding: 1px 5px; border-radius: 4px; }
 .wocard { display: flex; align-items: center; gap: 12px; margin-top: 12px;
   border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fbfcfe; }
+.woactions { display: flex; gap: 6px; flex-wrap: wrap; }
+.woactions button { padding: 8px 12px; font-size: 13px; }
 
 .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
 .big {

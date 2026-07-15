@@ -64,3 +64,38 @@ export async function searchWorkOrder(number) {
   if (!res.ok) throw new Error(`SAP lookup failed (${res.status}).`)
   return res.json()
 }
+
+// Search the Document Centre (SharePoint) for the form that matches a work
+// order, via the same middleware. `query` is the work order's `documentQuery`
+// ({ documentNumber?, keywords?, systems?, title? }). Resolves to an array of
+// results: { documentNumber, title, fileName, url, score }, best match first.
+export async function searchDocumentCentre(query) {
+  const base = getWorkOrderApi()
+  if (!base) {
+    const err = new Error('Document Centre search is not connected yet.')
+    err.code = 'NOT_CONFIGURED'
+    throw err
+  }
+  const qs = new URLSearchParams()
+  for (const k of ['documentNumber', 'keywords', 'systems', 'title']) {
+    if (query && query[k]) qs.set(k, query[k])
+  }
+  const url = `${base.replace(/\/+$/, '')}/documents/search?${qs.toString()}`
+  let res
+  try {
+    res = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'include' })
+  } catch {
+    throw new Error('Could not reach the Document Centre service.')
+  }
+  if (!res.ok) throw new Error(`Document Centre search failed (${res.status}).`)
+  const data = await res.json()
+  const results = Array.isArray(data.results) ? data.results : []
+  // Resolve relative proxy URLs against the middleware base.
+  return results.map((r) => ({ ...r, url: resolveUrl(base, r.url) }))
+}
+
+function resolveUrl(base, u) {
+  if (!u) return u
+  if (/^https?:/i.test(u)) return u
+  return `${base.replace(/\/+$/, '')}${u.startsWith('/') ? '' : '/'}${u}`
+}

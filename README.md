@@ -29,10 +29,15 @@ npm run preview  # serve the built version to try on other devices on your netwo
 - Open a **PDF or Word (.docx)** file — Word is converted to PDF in the browser — or start blank.
 - **Design form:** place text fields, dropdowns, OK/Fail/N/A groups, and signature blocks;
   drag to position; set labels and dropdown options.
-- **Auto-detect fields (Word docs):** when a `.docx` is opened, the app reads the document's
-  table structure and pre-places the fields for you — OK/Fail/N/A dropdowns in the status
-  columns and text fields for Remarks/comments and the blank label→value cells — then drops
-  you straight into fill mode, so techs don't lay anything out.
+- **Auto-detect fields (Word *and* PDF):** when a document is opened, the app pre-places the
+  fields for you — OK/Fail/N/A dropdowns in the status columns (including 1M/3M/6M/1Y) and text
+  fields for Remarks/comments and blank label→value cells — then drops you straight into fill
+  mode, so techs don't lay anything out. Word docs are read from their table structure; PDFs use
+  their embedded form fields when present, otherwise the table is reconstructed from the PDF text.
+- **Work-order search (SAP + Document Centre):** enter a work order on the home screen and the
+  app looks it up in SAP, automatically finds the matching form in the Document Centre, and opens
+  it prefilled. This needs the in-network service in [`server/`](server/README.md); until it's
+  configured the search box is a clearly-labelled preview.
 - **Save as template:** store a form's field layout and reuse it — technicians pick a template
   from the home screen and just fill the latest document. Templates export/import as files.
 - **Fill & sign:** fill in the fields on any device; sign with name + date/time (Outlook-style).

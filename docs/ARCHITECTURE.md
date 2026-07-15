@@ -136,7 +136,9 @@ ready to fill. This is the natural front door to Phases 3 + 5.
 **Why it needs a server.** A browser — especially an iPad — cannot call SAP directly (no SAP
 GUI; SAP Gateway/BAPI sit inside the network behind auth a public page can't reach, and CORS
 would block it). So the search box calls a thin **middleware** endpoint inside the network that
-does the SAP lookup server-side.
+does the SAP lookup server-side. A runnable reference implementation of this service ships in
+[`server/`](../server/README.md) (Node/Express) with a **mock mode** for demos and real
+SAP-OData + SharePoint-search code paths marked `TODO(IT)` where credentials/entity paths plug in.
 
 ```
  Home screen                 Middleware (in-network)            Systems of record
@@ -147,18 +149,26 @@ does the SAP lookup server-side.
  └───────────────┘   JSON   └────────────────────────┘         └──────────────────┘
 ```
 
-**Contract (already coded against).** The app calls `GET {API}/workorders/{number}` and expects:
+**Contract (already coded against — see `src/sap.js` and `server/`).** Two steps:
 
-```json
-{ "number": "2112345", "description": "Cooling tower inspection", "plant": "…",
-  "status": "REL", "equipment": "…", "documentUrl": "https://…", "documentName": "AppxB.docx" }
-```
+1. `GET {API}/workorders/{number}` → the order plus a `documentQuery`:
+   ```json
+   { "number":"2112345", "description":"Cooling tower inspection", "status":"REL",
+     "plant":"…", "equipment":"…",
+     "documentQuery": { "documentNumber":"AEI-3.3007", "keywords":"Cooling Towers …", "systems":"Mechanical" } }
+   ```
+2. `GET {API}/documents/search?documentNumber=&keywords=&systems=&title=` → ranked matches:
+   ```json
+   { "results": [ { "documentNumber":"AEI-3.3007", "title":"…", "fileName":"AppendixB.pdf", "url":"…", "score":0.95 } ] }
+   ```
 
-`documentUrl` is fetched with the user's session and run through the same open→auto-detect→fill
-pipeline as a manual upload. The endpoint URL is configurable at runtime
-(`localStorage["asaaei:workorderApi"]`) or build time (`VITE_WORKORDER_API`), so IT can point it
-at their server with no rebuild. Until it is set, the search box is a **preview** that explains
-what's needed rather than returning fake data (`src/sap.js`, `isWorkOrderSearchConfigured()`).
+The app runs both automatically: look up the work order, search the Document Centre with its
+`documentQuery`, then fetch the top result's `url` (a `GET {API}/documents/fetch?src=…` proxy so
+the browser never needs SharePoint auth/CORS) and run it through the same open→auto-detect→fill
+pipeline as a manual upload — so the tech lands on the prefilled form. The endpoint URL is
+configurable at runtime (`localStorage["asaaei:workorderApi"]`) or build time
+(`VITE_WORKORDER_API`), so IT can point it at their server with no rebuild. Until it is set, the
+search box is a **preview** that explains what's needed rather than returning fake data.
 
 **What we need from Basis/IT to turn it on:**
 

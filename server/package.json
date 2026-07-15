@@ -1,0 +1,19 @@
+{
+  "name": "asaaei-workorder-middleware",
+  "version": "0.1.0",
+  "description": "Thin in-network middleware that lets the ASAaei PWA look up SAP work orders and locate their inspection forms in the Airservices Document Centre (SharePoint).",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "pdf-lib": "^1.17.1"
+  }
+}
