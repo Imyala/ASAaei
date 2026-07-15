@@ -65,15 +65,34 @@ not required for the first working version.
 
 ## 4. Build phases (deliver value before IT unblocks the integrations)
 
-| Phase | Deliverable                                                        | Needs IT? |
-|-------|--------------------------------------------------------------------|-----------|
-| **1** | Web app: open PDF, place fields, fill, sign+timestamp, lock, download | No       |
-| **2** | Word→PDF conversion; save reusable field templates per form type    | No        |
-| **3** | Pull source documents from SharePoint / Horizons                    | Yes (Q1)  |
-| **4** | Server writes the finished PDF to the N: drive automatically         | Yes (Q2)  |
-| **5** | Collect SAP fields and close the IW32/IW42 work order               | Yes (Q3)  |
+| Phase | Deliverable                                                        | Needs IT? | Status |
+|-------|--------------------------------------------------------------------|-----------|--------|
+| **1** | Web app: open PDF, place fields, fill, sign+timestamp, lock, download | No     | ✅ Done |
+| **2** | Word→PDF conversion; reusable field templates; offline (installable PWA) | No | ✅ Done |
+| **3** | Pull source documents from SharePoint / Horizons                    | Yes (Q1)  | Planned |
+| **4** | Server writes the finished PDF to the N: drive automatically         | Yes (Q2)  | Planned |
+| **5** | Collect SAP fields and close the IW32/IW42 work order               | Yes (Q3)  | Planned |
 
-**Phase 1 is in this repo** (see the app at the project root). It runs in a browser with no
+### Phase 2 — how it works
+
+- **Reusable templates.** You lay out the fields for a form type once ("Pump Inspection
+  Sheet") and **Save as template**. Engineers then pick that template from the home screen and
+  just fill the current document — no rebuilding text boxes each time. Templates are stored in
+  the browser (IndexedDB) and can be **exported/imported as a file** to share across devices
+  (later synced via the Phase-3 server).
+- **Documents are re-downloaded every time.** Because engineers update the source documents
+  frequently, the app always loads the *latest* file when you use a template. The last copy is
+  cached so it still works **offline** — with a reminder that the offline copy may be stale.
+- **Word → PDF in the browser.** `.docx` files are converted to PDF client-side (mammoth +
+  html2canvas + pdf-lib) so it works with no server and offline. Fidelity is good for
+  text/checklist forms; complex layouts convert better server-side, which we can add in
+  Phase 3 (headless LibreOffice) once the network server exists.
+- **Offline / installable.** The app is a PWA: "Add to Home Screen" on an iPad and it runs
+  with no connection after the first load. *Note:* a service worker requires the app to be
+  **served over http(s)** (an internal host is fine) — offline mode does not work from a bare
+  `file://` copy.
+
+**Phases 1–2 are in this repo** (see the app at the project root). It runs in a browser with no
 server and no IT access, so the team can try the fill/sign/lock flow on any device today.
 
 ## 5. Questions for IT / Basis (each unblocks one phase)

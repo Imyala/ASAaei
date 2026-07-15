@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { renderPdfToImages } from './pdfRender.js'
 import { bakePdf, makeBlankPdf } from './bake.js'
+import { fileToPdfBytes } from './convert.js'
+import {
+  listTemplates, loadTemplate, saveTemplate, deleteTemplate,
+  cacheDoc, getCachedDoc, exportTemplate, importTemplateJson,
+} from './store.js'
 
 // ---- field defaults (sizes are fractions of the page) --------------------
 const DEFAULT_SIZE = {
@@ -28,89 +33,187 @@ function nowStamp() {
   })
 }
 
+// Reset a saved template's fields into a fresh, empty instance to fill.
+const instantiate = (fields) =>
+  fields.map((f) => ({ ...f, id: nextId(), value: f.type === 'signature' ? null : '' }))
+
 export default function App() {
-  const [pages, setPages] = useState([]) // rendered page images + dims
-  const [pdfBytes, setPdfBytes] = useState(null) // original bytes for baking
+  const [screen, setScreen] = useState('home') // 'home' | 'editor'
+  const [templates, setTemplates] = useState([])
+  const [online, setOnline] = useState(navigator.onLine)
+
+  // editor state
+  const [pages, setPages] = useState([])
+  const [pdfBytes, setPdfBytes] = useState(null)
   const [fileName, setFileName] = useState('document')
   const [fields, setFields] = useState([])
-  const [mode, setMode] = useState('design') // 'design' | 'fill'
+  const [mode, setMode] = useState('design')
   const [tool, setTool] = useState('select')
   const [selectedId, setSelectedId] = useState(null)
   const [locked, setLocked] = useState(false)
   const [busy, setBusy] = useState('')
+  const [activeTemplateId, setActiveTemplateId] = useState(null)
+  const [needSource, setNeedSource] = useState(false) // template chosen, waiting for document
+  const [cachedDoc, setCachedDoc] = useState(null)
+
+  const fileRef = useRef(null)
+  const importRef = useRef(null)
+  const pendingRef = useRef(null) // { action, templateId }
   const dragRef = useRef(null)
 
   const selected = fields.find((f) => f.id === selectedId) || null
 
-  // ---- load a PDF ---------------------------------------------------------
-  const loadBytes = useCallback(async (bytes, name) => {
-    setBusy('Rendering document…')
+  const refreshTemplates = useCallback(async () => setTemplates(await listTemplates()), [])
+  useEffect(() => { refreshTemplates() }, [refreshTemplates])
+  useEffect(() => {
+    const on = () => setOnline(true), off = () => setOnline(false)
+    window.addEventListener('online', on); window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+
+  // ---- rendering a document into the editor -------------------------------
+  const showBytesInEditor = useCallback(async (bytes, name, opts) => {
+    const imgs = await renderPdfToImages(bytes, 1.5)
+    setPdfBytes(bytes)
+    setPages(imgs)
+    setFileName(name.replace(/\.(pdf|docx)$/i, '') || 'document')
+    setNeedSource(false)
+    if (opts.fields !== undefined) setFields(opts.fields)
+    if (opts.mode) setMode(opts.mode)
+    if (opts.resetLock) setLocked(false)
+    setSelectedId(null)
+    setTool('select')
+    setScreen('editor')
+  }, [])
+
+  // ---- file chosen (new design / reload / apply template) -----------------
+  const onFileChosen = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const p = pendingRef.current || { action: 'new' }
+    setBusy(/\.docx$/i.test(file.name) ? 'Converting Word document…' : 'Opening document…')
     try {
-      const imgs = await renderPdfToImages(bytes, 1.5)
-      setPdfBytes(bytes)
-      setPages(imgs)
-      setFileName(name.replace(/\.pdf$/i, '') || 'document')
-      setFields([])
-      setSelectedId(null)
-      setLocked(false)
-      setMode('design')
-      setTool('select')
-    } catch (e) {
-      alert('Could not open that PDF.\n' + e.message)
+      const bytes = await fileToPdfBytes(file)
+      if (p.action === 'new') {
+        setActiveTemplateId(null)
+        await showBytesInEditor(bytes, file.name, { fields: [], mode: 'design', resetLock: true })
+      } else if (p.action === 'apply') {
+        const tpl = await loadTemplate(p.templateId)
+        setActiveTemplateId(p.templateId)
+        await cacheDoc(p.templateId, file.name, bytes)
+        await showBytesInEditor(bytes, file.name, { fields: instantiate(tpl.fields), mode: 'fill', resetLock: true })
+      } else if (p.action === 'reload') {
+        if (activeTemplateId) await cacheDoc(activeTemplateId, file.name, bytes)
+        await showBytesInEditor(bytes, file.name, {}) // keep existing fields/values
+      }
+    } catch (err) {
+      alert(err.message || 'Could not open that file.')
     } finally {
       setBusy('')
     }
-  }, [])
-
-  const onFile = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!/\.pdf$/i.test(file.name)) {
-      alert('Please choose a PDF.\n\nWord files are converted to PDF in a later phase — ' +
-        'for now, use “Save as PDF” in Word first.')
-      return
-    }
-    const buf = new Uint8Array(await file.arrayBuffer())
-    loadBytes(buf, file.name)
   }
 
+  const pickFile = (action, templateId) => {
+    pendingRef.current = { action, templateId }
+    fileRef.current?.click()
+  }
+
+  // ---- home actions -------------------------------------------------------
   const startBlank = async () => {
-    const bytes = await makeBlankPdf()
-    loadBytes(bytes, 'blank-form')
+    setActiveTemplateId(null)
+    setBusy('Preparing…')
+    try {
+      await showBytesInEditor(await makeBlankPdf(), 'blank-form', { fields: [], mode: 'design', resetLock: true })
+    } finally { setBusy('') }
   }
 
-  // ---- placing fields -----------------------------------------------------
+  const useTemplate = async (t) => {
+    const cache = await getCachedDoc(t.id)
+    setActiveTemplateId(t.id)
+    setCachedDoc(cache || null)
+    setPages([])
+    setNeedSource(true)
+    setScreen('editor')
+    pendingRef.current = { action: 'apply', templateId: t.id }
+    setFileName(t.name)
+    // preload the template so "use offline copy" works too
+    const tpl = await loadTemplate(t.id)
+    pendingRef.current.tpl = tpl
+  }
+
+  const useOfflineCopy = async () => {
+    const p = pendingRef.current
+    const cache = await getCachedDoc(p.templateId)
+    const tpl = await loadTemplate(p.templateId)
+    setBusy('Opening offline copy…')
+    try {
+      await showBytesInEditor(cache.bytes, cache.name, { fields: instantiate(tpl.fields), mode: 'fill', resetLock: true })
+    } finally { setBusy('') }
+  }
+
+  const onImport = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      await importTemplateJson(await file.text())
+      await refreshTemplates()
+    } catch (err) { alert(err.message) }
+  }
+
+  const doExport = async (t) => {
+    const tpl = await loadTemplate(t.id)
+    const blob = new Blob([exportTemplate(tpl)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${t.name.replace(/\s+/g, '-')}.template.json`; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const removeTemplate = async (t) => {
+    if (window.confirm(`Delete template “${t.name}”? This cannot be undone.`)) {
+      await deleteTemplate(t.id); await refreshTemplates()
+    }
+  }
+
+  const saveAsTemplate = async () => {
+    if (!fields.length) { alert('Add some fields first.'); return }
+    const name = window.prompt('Name this form template (e.g. “Pump Inspection Sheet”):', fileName)
+    if (!name) return
+    const tpl = await saveTemplate(name.trim(), fields)
+    setActiveTemplateId(tpl.id)
+    if (pdfBytes) await cacheDoc(tpl.id, fileName + '.pdf', pdfBytes)
+    await refreshTemplates()
+    alert(`Saved “${name}”. You can now reuse it from the home screen.`)
+  }
+
+  // ---- placing / editing fields (design mode) -----------------------------
   const onPageClick = (e, pageIndex) => {
     if (mode !== 'design' || tool === 'select') return
     const rect = e.currentTarget.getBoundingClientRect()
-    const xPct = (e.clientX - rect.left) / rect.width
-    const yPct = (e.clientY - rect.top) / rect.height
     const size = DEFAULT_SIZE[tool]
     const field = {
-      id: nextId(),
-      type: tool,
-      page: pageIndex,
-      xPct: Math.min(Math.max(xPct, 0), 1 - size.wPct),
-      yPct: Math.min(Math.max(yPct, 0), 1 - size.hPct),
+      id: nextId(), type: tool, page: pageIndex,
+      xPct: clamp((e.clientX - rect.left) / rect.width, 0, 1 - size.wPct),
+      yPct: clamp((e.clientY - rect.top) / rect.height, 0, 1 - size.hPct),
       ...size,
       label: TOOL_LABEL[tool],
       options: tool === 'dropdown' ? ['Option 1', 'Option 2', 'Option 3'] : [],
-      value: tool === 'signature' ? null : tool === 'checkgroup' ? '' : '',
+      value: tool === 'signature' ? null : '',
     }
     setFields((f) => [...f, field])
     setSelectedId(field.id)
     setTool('select')
   }
-
   const updateField = (id, patch) =>
     setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)))
-
   const deleteField = (id) => {
     setFields((fs) => fs.filter((f) => f.id !== id))
     if (selectedId === id) setSelectedId(null)
   }
 
-  // ---- drag to move (mouse + touch via pointer events) --------------------
+  // drag to move (pointer events → works with touch)
   const onFieldPointerDown = (e, field, pageEl) => {
     if (mode !== 'design' || tool !== 'select') return
     e.stopPropagation()
@@ -123,26 +226,19 @@ export default function App() {
       const d = dragRef.current
       if (!d) return
       const rect = d.pageEl.getBoundingClientRect()
-      setFields((fs) =>
-        fs.map((f) => {
-          if (f.id !== d.id) return f
-          const xPct = (e.clientX - rect.left) / rect.width - f.wPct / 2
-          const yPct = (e.clientY - rect.top) / rect.height - f.hPct / 2
-          return {
-            ...f,
-            xPct: Math.min(Math.max(xPct, 0), 1 - f.wPct),
-            yPct: Math.min(Math.max(yPct, 0), 1 - f.hPct),
-          }
-        })
-      )
+      setFields((fs) => fs.map((f) => {
+        if (f.id !== d.id) return f
+        return {
+          ...f,
+          xPct: clamp((e.clientX - rect.left) / rect.width - f.wPct / 2, 0, 1 - f.wPct),
+          yPct: clamp((e.clientY - rect.top) / rect.height - f.hPct / 2, 0, 1 - f.hPct),
+        }
+      }))
     }
     const up = () => (dragRef.current = null)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
-    return () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
   }, [])
 
   // ---- fill actions -------------------------------------------------------
@@ -151,19 +247,11 @@ export default function App() {
     if (!name) return
     updateField(field.id, { value: { name: name.trim(), timestamp: nowStamp() } })
   }
-
   const finalize = () => {
-    const unsigned = fields.filter((f) => f.type === 'signature' && !f.value)
-    const msg = unsigned.length
-      ? `Lock this document?\n\nAfter locking, fields can no longer be edited. ` +
-        `The ${unsigned.length} empty signature field(s) can still be signed.`
-      : 'Lock this document? Fields can no longer be edited (signatures may still be added).'
-    if (window.confirm(msg)) {
-      setLocked(true)
-      setMode('fill')
+    if (window.confirm('Lock this document? Fields can no longer be edited (signatures may still be added).')) {
+      setLocked(true); setMode('fill')
     }
   }
-
   const download = async () => {
     if (!pdfBytes) return
     setBusy('Building PDF…')
@@ -172,45 +260,107 @@ export default function App() {
       const blob = new Blob([out], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url
-      a.download = `${fileName}${locked ? '-signed' : ''}.pdf`
-      a.click()
+      a.href = url; a.download = `${fileName}${locked ? '-signed' : ''}.pdf`; a.click()
       URL.revokeObjectURL(url)
-    } catch (e) {
-      alert('Could not build the PDF.\n' + e.message)
-    } finally {
-      setBusy('')
-    }
+    } catch (e) { alert('Could not build the PDF.\n' + e.message) }
+    finally { setBusy('') }
   }
 
-  // ---- render -------------------------------------------------------------
-  if (!pages.length) {
+  const goHome = () => {
+    setScreen('home'); setPages([]); setFields([]); setNeedSource(false); refreshTemplates()
+  }
+
+  // ================= HOME SCREEN =================
+  if (screen === 'home') {
     return (
-      <div className="landing">
-        <h1>ASAaei</h1>
-        <p className="tag">Document fill, sign &amp; lock — Phase 1 prototype</p>
-        <div className="card">
-          <label className="btn primary">
-            Open a PDF
-            <input type="file" accept="application/pdf" onChange={onFile} hidden />
-          </label>
-          <button className="btn" onClick={startBlank}>Start a blank page</button>
-        </div>
-        <p className="hint">
-          Works in any browser — iPad, tablet, or desktop. Add fillable fields, tick boxes and
-          signatures, then lock and download a finished PDF. Saving to the N: drive and closing
-          SAP work orders come in later phases (see <code>docs/ARCHITECTURE.md</code>).
-        </p>
+      <div className="home">
+        <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf" hidden onChange={onFileChosen} />
+        <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={onImport} />
+        <header className="homehead">
+          <h1>ASAaei</h1>
+          <span className={'net ' + (online ? 'up' : 'down')}>{online ? '● Online' : '○ Offline'}</span>
+        </header>
+        <p className="tag">Document fill, sign &amp; lock — works offline on iPad, tablet &amp; desktop.</p>
+
+        <section className="actions">
+          <button className="big primary" onClick={() => pickFile('new')}>
+            ＋ New form<small>Open a PDF/Word doc and lay out fields</small>
+          </button>
+          <button className="big" onClick={startBlank}>
+            ▢ Blank page<small>Experiment on an empty A4 sheet</small>
+          </button>
+          <button className="big" onClick={() => importRef.current?.click()}>
+            ⇩ Import template<small>Load a template shared as a file</small>
+          </button>
+        </section>
+
+        <h2>Saved form templates</h2>
+        {busy && <div className="busy">{busy}</div>}
+        {templates.length === 0 ? (
+          <p className="empty">No templates yet. Create a “New form”, add your fields, then
+            <b> Save as template</b> — after that, engineers just pick it here and fill the
+            latest document.</p>
+        ) : (
+          <ul className="tpllist">
+            {templates.map((t) => (
+              <li key={t.id} className="tplcard">
+                <div className="tplmeta">
+                  <b>{t.name}</b>
+                  <small>{t.fieldCount} fields</small>
+                </div>
+                <div className="tplactions">
+                  <button className="primary" onClick={() => useTemplate(t)}>Use</button>
+                  <button onClick={() => doExport(t)}>Export</button>
+                  <button className="danger" onClick={() => removeTemplate(t)}>Delete</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="hint">Source documents are downloaded fresh each time from the document
+          centre (engineers update them often). The last copy is kept for offline use.
+          SharePoint/“Horizons”, N: drive save and SAP close-out arrive in later phases —
+          see <code>docs/ARCHITECTURE.md</code>.</p>
       </div>
     )
   }
 
+  // ================= EDITOR: waiting for source document =================
+  if (needSource && !pages.length) {
+    return (
+      <div className="home">
+        <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf" hidden onChange={onFileChosen} />
+        <header className="homehead">
+          <h1>{fileName}</h1>
+          <button onClick={goHome}>← Home</button>
+        </header>
+        <p className="tag">Load the current document to fill it in.</p>
+        <section className="actions">
+          <button className="big primary" onClick={() => pickFile('apply', activeTemplateId)}>
+            ⇩ Load latest document<small>Get the up-to-date file from the document centre</small>
+          </button>
+          {cachedDoc && (
+            <button className="big" onClick={useOfflineCopy}>
+              ▣ Use offline copy<small>Saved {new Date(cachedDoc.savedAt).toLocaleString()}</small>
+            </button>
+          )}
+        </section>
+        {busy && <div className="busy">{busy}</div>}
+        <p className="hint">Always load the latest when you have a connection — the offline copy
+          may be out of date.</p>
+      </div>
+    )
+  }
+
+  // ================= EDITOR =================
   return (
     <div className="app">
+      <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf" hidden onChange={onFileChosen} />
       <header className="toolbar">
         <div className="group">
+          <button className="link" onClick={goHome}>← Home</button>
           <strong className="brand">ASAaei</strong>
-          <span className="file">{fileName}.pdf</span>
+          <span className="file">{fileName}</span>
         </div>
 
         <div className="group modes">
@@ -231,6 +381,8 @@ export default function App() {
         )}
 
         <div className="group right">
+          {mode === 'design' && !locked && <button onClick={saveAsTemplate}>💾 Save as template</button>}
+          <button onClick={() => pickFile('reload', activeTemplateId)}>↻ Reload latest</button>
           {locked && <span className="locked-badge">🔒 Locked</span>}
           {!locked && <button onClick={finalize}>Finalize &amp; lock</button>}
           <button className="primary" onClick={download}>Download PDF</button>
@@ -246,28 +398,14 @@ export default function App() {
         <div className="pagescroll">
           {pages.map((pg, i) => (
             <div key={i} className="pagewrap">
-              <div
-                className="page"
-                data-page={i}
-                onClick={(e) => onPageClick(e, i)}
-                style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}
-              >
+              <div className="page" data-page={i} onClick={(e) => onPageClick(e, i)}
+                style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}>
                 <img src={pg.dataUrl} alt={`Page ${i + 1}`} draggable={false} />
                 {fields.filter((f) => f.page === i).map((f) => (
-                  <FieldView
-                    key={f.id}
-                    field={f}
-                    mode={mode}
-                    tool={tool}
-                    locked={locked}
-                    selected={f.id === selectedId}
-                    onSelect={() => setSelectedId(f.id)}
-                    onChange={(patch) => updateField(f.id, patch)}
-                    onSign={() => signField(f)}
-                    onPointerDown={(e) =>
-                      onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'))
-                    }
-                  />
+                  <FieldView key={f.id} field={f} mode={mode} tool={tool} locked={locked}
+                    selected={f.id === selectedId} onSelect={() => setSelectedId(f.id)}
+                    onChange={(patch) => updateField(f.id, patch)} onSign={() => signField(f)}
+                    onPointerDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'))} />
                 ))}
               </div>
             </div>
@@ -284,21 +422,18 @@ export default function App() {
             {selected.type === 'dropdown' && (
               <label>Options (one per line)
                 <textarea rows={5} value={selected.options.join('\n')}
-                  onChange={(e) =>
-                    updateField(selected.id, {
-                      options: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
-                    })} />
+                  onChange={(e) => updateField(selected.id, {
+                    options: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
+                  })} />
               </label>
             )}
             <div className="sizerow">
               <label>Width %
-                <input type="number" min={5} max={100}
-                  value={Math.round(selected.wPct * 100)}
+                <input type="number" min={5} max={100} value={Math.round(selected.wPct * 100)}
                   onChange={(e) => updateField(selected.id, { wPct: clamp(e.target.value / 100, 0.05, 1) })} />
               </label>
               <label>Height %
-                <input type="number" min={2} max={40}
-                  value={Math.round(selected.hPct * 100)}
+                <input type="number" min={2} max={40} value={Math.round(selected.hPct * 100)}
                   onChange={(e) => updateField(selected.id, { hPct: clamp(e.target.value / 100, 0.02, 0.4) })} />
               </label>
             </div>
@@ -312,23 +447,21 @@ export default function App() {
 }
 
 function clamp(v, lo, hi) {
-  v = Number(v) || lo
+  v = Number(v)
+  if (Number.isNaN(v)) v = lo
   return Math.min(Math.max(v, lo), hi)
 }
 
 // ---- one field, rendered on the page -------------------------------------
 function FieldView({ field: f, mode, tool, locked, selected, onSelect, onChange, onSign, onPointerDown }) {
   const style = {
-    left: `${f.xPct * 100}%`,
-    top: `${f.yPct * 100}%`,
-    width: `${f.wPct * 100}%`,
-    height: `${f.hPct * 100}%`,
+    left: `${f.xPct * 100}%`, top: `${f.yPct * 100}%`,
+    width: `${f.wPct * 100}%`, height: `${f.hPct * 100}%`,
   }
   const designMove = mode === 'design' && tool === 'select' && !locked
   const cls = `field ${f.type}${selected ? ' selected' : ''}${designMove ? ' movable' : ''}`
   const readOnly = mode === 'fill' && locked && f.type !== 'signature'
 
-  // DESIGN mode: show a placeholder box; select-tool allows drag.
   if (mode === 'design') {
     return (
       <div className={cls} style={style}
@@ -338,8 +471,6 @@ function FieldView({ field: f, mode, tool, locked, selected, onSelect, onChange,
       </div>
     )
   }
-
-  // FILL mode: real controls.
   return (
     <div className={cls} style={style} onClick={(e) => e.stopPropagation()}>
       {f.type === 'text' && (
@@ -356,8 +487,7 @@ function FieldView({ field: f, mode, tool, locked, selected, onSelect, onChange,
       {f.type === 'checkgroup' && (
         <div className="checkgroup">
           {['OK', 'Fail', 'N/A'].map((o) => (
-            <button key={o} disabled={readOnly}
-              className={f.value === o ? 'on ' + o : ''}
+            <button key={o} disabled={readOnly} className={f.value === o ? 'on ' + o : ''}
               onClick={() => onChange({ value: f.value === o ? '' : o })}>{o}</button>
           ))}
         </div>
