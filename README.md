@@ -29,7 +29,11 @@ npm run preview  # serve the built version to try on other devices on your netwo
 - Open a **PDF or Word (.docx)** file — Word is converted to PDF in the browser — or start blank.
 - **Design form:** place text fields, dropdowns, OK/Fail/N/A groups, and signature blocks;
   drag to position; set labels and dropdown options.
-- **Save as template:** store a form's field layout and reuse it — engineers pick a template
+- **Auto-detect fields (Word docs):** when a `.docx` is opened, the app reads the document's
+  table structure and pre-places the fields for you — OK/Fail/N/A dropdowns in the status
+  columns and text fields for Remarks/comments and the blank label→value cells — then drops
+  you straight into fill mode, so techs don't lay anything out.
+- **Save as template:** store a form's field layout and reuse it — technicians pick a template
   from the home screen and just fill the latest document. Templates export/import as files.
 - **Fill & sign:** fill in the fields on any device; sign with name + date/time (Outlook-style).
 - **Finalize & lock:** locks the fields so the document can no longer be edited — only further

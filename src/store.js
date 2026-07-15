@@ -72,7 +72,7 @@ function stripValue(f) {
 
 // ---- cached source document (for offline use) ----------------------------
 // Documents are re-downloaded from the document centre every session when
-// online; we keep the last copy so engineers can still work offline.
+// online; we keep the last copy so technicians can still work offline.
 export async function cacheDoc(templateId, name, bytes) {
   await set('doc:' + templateId, { name, bytes, savedAt: new Date().toISOString() })
 }

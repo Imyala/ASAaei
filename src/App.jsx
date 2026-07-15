@@ -6,6 +6,7 @@ import {
   listTemplates, loadTemplate, saveTemplate, deleteTemplate,
   cacheDoc, getCachedDoc, exportTemplate, importTemplateJson,
 } from './store.js'
+import { searchWorkOrder } from './sap.js'
 
 // ---- field defaults (sizes are fractions of the page) --------------------
 const DEFAULT_SIZE = {
@@ -56,6 +57,12 @@ export default function App() {
   const [needSource, setNeedSource] = useState(false) // template chosen, waiting for document
   const [cachedDoc, setCachedDoc] = useState(null)
 
+  // work-order (SAP) search
+  const [woInput, setWoInput] = useState('')
+  const [woBusy, setWoBusy] = useState(false)
+  const [woResult, setWoResult] = useState(null)
+  const [woNotice, setWoNotice] = useState('') // '' | 'not-configured' | error text
+
   const fileRef = useRef(null)
   const importRef = useRef(null)
   const pendingRef = useRef(null) // { action, templateId }
@@ -94,10 +101,18 @@ export default function App() {
     const p = pendingRef.current || { action: 'new' }
     setBusy(/\.docx$/i.test(file.name) ? 'Converting Word document…' : 'Opening document…')
     try {
-      const bytes = await fileToPdfBytes(file)
+      const { bytes, autoFields = [] } = await fileToPdfBytes(file)
       if (p.action === 'new') {
         setActiveTemplateId(null)
-        await showBytesInEditor(bytes, file.name, { fields: [], mode: 'design', resetLock: true })
+        // Word docs come back with the fillable cells already detected — drop
+        // the tech straight into fill mode when we found any, otherwise open a
+        // clean design canvas as before.
+        const detected = autoFields.map((f) => ({ ...f, id: nextId() }))
+        await showBytesInEditor(bytes, file.name, {
+          fields: detected,
+          mode: detected.length ? 'fill' : 'design',
+          resetLock: true,
+        })
       } else if (p.action === 'apply') {
         const tpl = await loadTemplate(p.templateId)
         setActiveTemplateId(p.templateId)
@@ -150,6 +165,43 @@ export default function App() {
     try {
       await showBytesInEditor(cache.bytes, cache.name, { fields: instantiate(tpl.fields), mode: 'fill', resetLock: true })
     } finally { setBusy('') }
+  }
+
+  // ---- work-order (SAP) search -------------------------------------------
+  const searchWO = async () => {
+    setWoNotice(''); setWoResult(null)
+    setWoBusy(true)
+    try {
+      setWoResult(await searchWorkOrder(woInput))
+    } catch (err) {
+      setWoNotice(err.code === 'NOT_CONFIGURED' ? 'not-configured' : (err.message || 'Search failed.'))
+    } finally {
+      setWoBusy(false)
+    }
+  }
+
+  // Pull the document linked to a work order and open it (auto-detecting fields,
+  // exactly like a manually opened file). Runs once the SAP middleware exists.
+  const openWorkOrderDoc = async (wo) => {
+    if (!wo?.documentUrl) return
+    setBusy('Loading work order document…')
+    try {
+      const resp = await fetch(wo.documentUrl, { credentials: 'include' })
+      if (!resp.ok) throw new Error(`Could not fetch the document (${resp.status}).`)
+      const blob = await resp.blob()
+      const name = wo.documentName || `WO-${wo.number}.pdf`
+      const file = new File([blob], name, { type: blob.type })
+      const { bytes, autoFields = [] } = await fileToPdfBytes(file)
+      setActiveTemplateId(null)
+      const detected = autoFields.map((f) => ({ ...f, id: nextId() }))
+      await showBytesInEditor(bytes, name, {
+        fields: detected, mode: detected.length ? 'fill' : 'design', resetLock: true,
+      })
+    } catch (err) {
+      alert(err.message || 'Could not open the work order document.')
+    } finally {
+      setBusy('')
+    }
   }
 
   const onImport = async (e) => {
@@ -282,6 +334,38 @@ export default function App() {
         </header>
         <p className="tag">Document fill, sign &amp; lock — works offline on iPad, tablet &amp; desktop.</p>
 
+        <section className="wo">
+          <label className="wolabel" htmlFor="wo">Find a work order</label>
+          <div className="worow">
+            <input id="wo" className="woinput" inputMode="numeric" placeholder="Work order number (e.g. 2112345)"
+              value={woInput} onChange={(e) => setWoInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') searchWO() }} />
+            <button className="primary" onClick={searchWO} disabled={woBusy}>
+              {woBusy ? 'Searching…' : '🔍 Search SAP'}
+            </button>
+          </div>
+          {woNotice === 'not-configured' && (
+            <div className="wonotice">
+              <b>SAP search isn’t connected yet.</b> This is the planned entry point: enter a work
+              order and the app looks it up in SAP, then pulls its details and document
+              automatically. It needs a small in-network service that exposes SAP (BAPI/OData) —
+              see <code>docs/ARCHITECTURE.md</code> §8.
+            </div>
+          )}
+          {woNotice && woNotice !== 'not-configured' && <div className="wonotice err">{woNotice}</div>}
+          {woResult && (
+            <div className="wocard">
+              <div className="tplmeta">
+                <b>WO {woResult.number}</b>
+                <small>{[woResult.description, woResult.status].filter(Boolean).join(' · ')}</small>
+              </div>
+              {woResult.documentUrl
+                ? <button className="primary" onClick={() => openWorkOrderDoc(woResult)}>Open document</button>
+                : <small className="empty">No document linked to this work order.</small>}
+            </div>
+          )}
+        </section>
+
         <section className="actions">
           <button className="big primary" onClick={() => pickFile('new')}>
             ＋ New form<small>Open a PDF/Word doc and lay out fields</small>
@@ -298,7 +382,7 @@ export default function App() {
         {busy && <div className="busy">{busy}</div>}
         {templates.length === 0 ? (
           <p className="empty">No templates yet. Create a “New form”, add your fields, then
-            <b> Save as template</b> — after that, engineers just pick it here and fill the
+            <b> Save as template</b> — after that, technicians just pick it here and fill the
             latest document.</p>
         ) : (
           <ul className="tpllist">
@@ -318,7 +402,7 @@ export default function App() {
           </ul>
         )}
         <p className="hint">Source documents are downloaded fresh each time from the document
-          centre (engineers update them often). The last copy is kept for offline use.
+          centre (updated often). The last copy is kept for offline use.
           SharePoint/“Horizons”, N: drive save and SAP close-out arrive in later phases —
           see <code>docs/ARCHITECTURE.md</code>.</p>
       </div>

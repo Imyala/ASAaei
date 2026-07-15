@@ -22,6 +22,23 @@ body {
 .net.up { color: #2f9e57; }
 .net.down { color: #b06a00; }
 .tag { color: #5a647a; margin: 4px 0 20px; }
+
+/* ---------- work-order (SAP) search ---------- */
+.wo { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 22px; }
+.wolabel { display: block; font-weight: 600; color: #2a3350; margin-bottom: 8px; }
+.worow { display: flex; gap: 8px; flex-wrap: wrap; }
+.woinput {
+  flex: 1; min-width: 180px; padding: 12px 14px; font-size: 16px;
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.worow button { padding: 12px 18px; white-space: nowrap; }
+.wonotice { margin-top: 12px; font-size: 13px; line-height: 1.5; color: #4a5266;
+  background: #f4f7fc; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.wonotice.err { color: #a12; background: #fdeef0; border-color: #f3c9cf; }
+.wonotice code { background: #e3e8f2; padding: 1px 5px; border-radius: 4px; }
+.wocard { display: flex; align-items: center; gap: 12px; margin-top: 12px;
+  border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fbfcfe; }
+
 .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
 .big {
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;

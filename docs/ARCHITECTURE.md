@@ -75,12 +75,18 @@ not required for the first working version.
 
 ### Phase 2 — how it works
 
+- **Auto-detected fields (Word docs).** When a `.docx` is opened, the app reads the document's
+  real table structure and pre-places the fields — **OK/Fail/N/A dropdowns** in the status
+  columns (including maintenance frequency columns like 1M/3M/6M/1Y) and **text fields** for
+  Remarks/comments and blank label→value cells — then opens straight in fill mode. Techs don't
+  lay anything out; they just fill. (Auto-detection uses the Word table grid, so it applies to
+  `.docx` sources; PDFs still support manual/template field placement.)
 - **Reusable templates.** You lay out the fields for a form type once ("Pump Inspection
-  Sheet") and **Save as template**. Engineers then pick that template from the home screen and
+  Sheet") and **Save as template**. Technicians then pick that template from the home screen and
   just fill the current document — no rebuilding text boxes each time. Templates are stored in
   the browser (IndexedDB) and can be **exported/imported as a file** to share across devices
   (later synced via the Phase-3 server).
-- **Documents are re-downloaded every time.** Because engineers update the source documents
+- **Documents are re-downloaded every time.** Because the source documents are updated
   frequently, the app always loads the *latest* file when you use a template. The last copy is
   cached so it still works **offline** — with a reminder that the offline copy may be stale.
 - **Word → PDF in the browser.** `.docx` files are converted to PDF client-side (mammoth +
@@ -120,3 +126,51 @@ server and no IT access, so the team can try the fill/sign/lock flow on any devi
 - Company single sign-on (Microsoft Entra ID) for login once the server exists.
 - Every finished document logged (who, what work order, when, N: path).
 - Signed PDFs are immutable; re-opening a signed doc allows adding signatures only.
+
+## 8. Work-order search — the SAP-first entry point
+
+The target flow makes the **work order the way in**: a tech types a work order number on the
+home screen, taps **Search**, and the app pulls the SAP order details *and* the linked document,
+ready to fill. This is the natural front door to Phases 3 + 5.
+
+**Why it needs a server.** A browser — especially an iPad — cannot call SAP directly (no SAP
+GUI; SAP Gateway/BAPI sit inside the network behind auth a public page can't reach, and CORS
+would block it). So the search box calls a thin **middleware** endpoint inside the network that
+does the SAP lookup server-side.
+
+```
+ Home screen                 Middleware (in-network)            Systems of record
+ ┌───────────────┐  HTTPS   ┌────────────────────────┐         ┌──────────────────┐
+ │ WO: 2112345   │─────────►│ GET /workorders/2112345│────────►│ SAP  (BAPI/OData) │  order header,
+ │  [ Search ]   │          │  → SAP order details    │         │  IW32/IW42        │  status, equipment
+ │               │◄─────────│  → link to the document │◄────────│ SharePoint / N:   │  the actual doc
+ └───────────────┘   JSON   └────────────────────────┘         └──────────────────┘
+```
+
+**Contract (already coded against).** The app calls `GET {API}/workorders/{number}` and expects:
+
+```json
+{ "number": "2112345", "description": "Cooling tower inspection", "plant": "…",
+  "status": "REL", "equipment": "…", "documentUrl": "https://…", "documentName": "AppxB.docx" }
+```
+
+`documentUrl` is fetched with the user's session and run through the same open→auto-detect→fill
+pipeline as a manual upload. The endpoint URL is configurable at runtime
+(`localStorage["asaaei:workorderApi"]`) or build time (`VITE_WORKORDER_API`), so IT can point it
+at their server with no rebuild. Until it is set, the search box is a **preview** that explains
+what's needed rather than returning fake data (`src/sap.js`, `isWorkOrderSearchConfigured()`).
+
+**What we need from Basis/IT to turn it on:**
+
+1. **SAP read for a work order** — a **BAPI** (`BAPI_ALM_ORDER_GET_DETAIL`) or an **OData/SAP
+   Gateway** service that returns order header, status, plant and equipment for a given order
+   number. (OData is easiest to consume from the middleware.)
+2. **The document link** — how a work order points at its inspection document: is it an SAP DMS
+   document (DIR) attached to the order, or a SharePoint/Horizons library keyed by work order?
+   The middleware resolves that to a `documentUrl`.
+3. **Auth** — Entra ID single sign-on so the middleware calls SAP/SharePoint as the signed-in
+   user (or a scoped service account), and the browser call carries that session.
+4. **Hosting/CORS** — a small service (.NET fits a Microsoft/SAP shop; Node also works) reachable
+   from the devices on the network, returning the JSON contract above.
+
+Closing the order (write-back, `BAPI_ALM_ORDER_MAINTAIN`, Phase 5) reuses the same middleware.

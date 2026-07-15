@@ -8,10 +8,117 @@ const A4_H_PX = 1123
 const A4_W_PT = 595.28
 const A4_H_PT = 841.89
 
+// ---------------------------------------------------------------------------
+// Auto field detection
+// ---------------------------------------------------------------------------
+// Word documents keep their real table structure, so before we flatten the doc
+// to an image we walk every table and decide, cell by cell, what the tech is
+// meant to fill in:
+//   • status columns (OK/Fail/N/A, or maintenance frequencies 1M/3M/6M/1Y) ->
+//     an OK/Fail/N/A dropdown
+//   • Remarks / Comments columns and blank label→value cells -> a text field
+// The blank cells become pre-placed fields so the tech just fills, no layout.
+
+const RX = {
+  remarks: /remark|comment|note|observation|action|finding/i,
+  status: /\b(ok\s*\/?\s*fail|pass\s*\/?\s*fail|result|status|condition|inspect|check)\b|\bok\b|\bfail\b|\bn\/?a\b/i,
+  // maintenance frequency codes: 1M 3M 6M 12M 1Y, or single D/W/M/Q/Y
+  freq: /^(?:\d{1,2}\s*[dwmqy]|[dwmqy])$/i,
+  textish: /model|serial|barcode|calibrat|reading|value|measure|number|no\.?$|name|hours|pressure|temp|date|site|order|plan|cert|sheet/i,
+}
+
+const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
+
+// Classify a column from its header text. Returns 'status' | 'text' | ''.
+function classifyHeader(text) {
+  const t = norm(text)
+  if (!t) return ''
+  if (RX.remarks.test(t)) return 'text'
+  if (RX.freq.test(t.replace(/\s/g, ''))) return 'status'
+  if (RX.status.test(t)) return 'status'
+  if (RX.textish.test(t)) return 'text'
+  return ''
+}
+
+// Walk the laid-out document (`holder`) and return pre-placed field definitions.
+// Coordinates are page-relative fractions, matching the field model used by the
+// editor. `holder` is the same element we hand to html2canvas, so its geometry
+// maps 1:1 onto the rendered PDF pages.
+export function detectTableFields(holder) {
+  const fields = []
+  const holderBox = holder.getBoundingClientRect()
+  const tables = holder.querySelectorAll('table')
+
+  tables.forEach((table) => {
+    const rows = Array.from(table.rows || [])
+    if (rows.length < 1) return
+    const colCount = Math.max(...rows.map((r) => r.cells.length))
+
+    // Column roles from the first (header) row.
+    const header = Array.from(rows[0].cells).map((c) => norm(c.textContent))
+    const roles = []
+    for (let c = 0; c < colCount; c++) roles[c] = classifyHeader(header[c] || '')
+
+    // A "grid" inspection table has a recognised status/remarks column; a
+    // simple label→value table (Site name | …) does not. In grids the first
+    // column is the task description and is never a field; in label tables the
+    // second column is the value the tech fills in.
+    const isGrid = roles.some((r) => r === 'status') || colCount >= 3
+
+    rows.forEach((row) => {
+      const cells = Array.from(row.cells)
+      const labelIdx = cells.findIndex((c) => norm(c.textContent).length > 0)
+      const rowLabel = labelIdx >= 0 ? norm(cells[labelIdx].textContent) : ''
+
+      cells.forEach((cell, ci) => {
+        if (norm(cell.textContent).length > 0) return // already has content
+        if (ci === labelIdx) return // the row's own label cell
+        if (isGrid && ci === 0) return // task-description column stays blank
+
+        // Role: header wins; otherwise default label→value blanks to text.
+        let role = roles[ci]
+        if (!role) role = isGrid ? '' : 'text'
+        if (!role) return // unknown column in a grid -> leave alone
+
+        const r = cell.getBoundingClientRect()
+        const x = r.left - holderBox.left
+        const y = r.top - holderBox.top
+        if (r.width < 16 || r.height < 8) return // too small to be a field
+
+        // Inset a touch so the control sits inside the cell borders.
+        const pad = 2
+        const page = Math.floor((y + r.height / 2) / A4_H_PX)
+        const yInPage = y - page * A4_H_PX
+        const field = {
+          type: role === 'status' ? 'dropdown' : 'text',
+          page,
+          xPct: clampPct((x + pad) / A4_W_PX),
+          yPct: clampPct((yInPage + pad) / A4_H_PX),
+          wPct: clampPct((r.width - pad * 2) / A4_W_PX),
+          hPct: clampPct((r.height - pad * 2) / A4_H_PX),
+          label: norm(header[ci]) || rowLabel || (role === 'status' ? 'Result' : 'Detail'),
+          options: role === 'status' ? ['OK', 'Fail', 'N/A'] : [],
+          value: '',
+          auto: true,
+        }
+        fields.push(field)
+      })
+    })
+  })
+
+  return fields
+}
+
+function clampPct(v) {
+  if (!Number.isFinite(v)) return 0
+  return Math.min(Math.max(v, 0), 1)
+}
+
 // Convert a .docx to PDF entirely in the browser (no server, works offline).
-// mammoth turns the document into HTML; we lay it out at A4 width, rasterise
-// with html2canvas, slice into pages, and assemble a PDF with pdf-lib.
-// The result is treated exactly like an uploaded PDF from then on.
+// mammoth turns the document into HTML; we lay it out at A4 width, detect the
+// fillable table cells, rasterise with html2canvas, slice into pages, and
+// assemble a PDF with pdf-lib. The result is treated exactly like an uploaded
+// PDF from then on, and the detected fields ride along as `autoFields`.
 export async function docxToPdf(arrayBuffer) {
   const { value: html } = await mammoth.convertToHtml({ arrayBuffer })
 
@@ -26,6 +133,9 @@ export async function docxToPdf(arrayBuffer) {
   document.body.appendChild(holder)
 
   try {
+    // Measure fillable cells before rasterising (needs a live layout).
+    const autoFields = detectTableFields(holder)
+
     const canvas = await html2canvas(holder, {
       scale: 2, backgroundColor: '#ffffff', windowWidth: A4_W_PX, useCORS: true,
     })
@@ -48,16 +158,19 @@ export async function docxToPdf(arrayBuffer) {
       const drawH = (slice.height / slice.width) * A4_W_PT
       page.drawImage(png, { x: 0, y: A4_H_PT - drawH, width: A4_W_PT, height: Math.min(drawH, A4_H_PT) })
     }
-    return await pdfDoc.save()
+    // Drop any field whose page fell outside the produced range (safety).
+    const fields = autoFields.filter((f) => f.page >= 0 && f.page < pageCount)
+    return { bytes: await pdfDoc.save(), autoFields: fields }
   } finally {
     document.body.removeChild(holder)
   }
 }
 
-// Route any uploaded file to PDF bytes. PDFs pass through untouched.
+// Route any uploaded file to PDF bytes plus any auto-detected fields.
+// PDFs pass through untouched (no structure to read, so no auto fields yet).
 export async function fileToPdfBytes(file) {
   const buf = await file.arrayBuffer()
-  if (/\.pdf$/i.test(file.name)) return new Uint8Array(buf)
+  if (/\.pdf$/i.test(file.name)) return { bytes: new Uint8Array(buf), autoFields: [] }
   if (/\.docx$/i.test(file.name)) return await docxToPdf(buf)
   throw new Error('Unsupported file type. Please use a PDF or Word (.docx) file.')
 }
