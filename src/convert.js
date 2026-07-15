@@ -2,7 +2,8 @@ import mammoth from 'mammoth/mammoth.browser.js'
 import html2canvas from 'html2canvas'
 import { PDFDocument } from 'pdf-lib'
 import { classifyHeader, norm, OK_FAIL_NA } from './fieldClassify.js'
-import { detectPdfFields } from './pdfFields.js'
+import { detectPdfFields, sniffPdfIdentity } from './pdfFields.js'
+import { extractIdentity } from './docId.js'
 
 // A4 in CSS pixels (~96 dpi) and in PDF points.
 const A4_W_PX = 794
@@ -103,6 +104,7 @@ function clampPct(v) {
 // PDF from then on, and the detected fields ride along as `autoFields`.
 export async function docxToPdf(arrayBuffer) {
   const { value: html } = await mammoth.convertToHtml({ arrayBuffer })
+  const identity = extractIdentity(htmlToText(html))
 
   const holder = document.createElement('div')
   Object.assign(holder.style, {
@@ -142,27 +144,33 @@ export async function docxToPdf(arrayBuffer) {
     }
     // Drop any field whose page fell outside the produced range (safety).
     const fields = autoFields.filter((f) => f.page >= 0 && f.page < pageCount)
-    return { bytes: await pdfDoc.save(), autoFields: fields }
+    return { bytes: await pdfDoc.save(), autoFields: fields, ...identity }
   } finally {
     document.body.removeChild(holder)
   }
 }
 
-// Route any uploaded file to PDF bytes plus any auto-detected fields.
+// Strip HTML to plain text (with line breaks) for identity sniffing.
+function htmlToText(html) {
+  const el = document.createElement('div')
+  el.innerHTML = (html || '').replace(/<\/(p|div|tr|h[1-6]|li)>/gi, '\n')
+  return el.textContent || ''
+}
+
+// Route any uploaded file to PDF bytes, auto-detected fields, and identity.
 // • .docx  -> converted here, fields read from the Word table structure.
 // • .pdf   -> passed through; fields read from the PDF (AcroForm or text grid).
 export async function fileToPdfBytes(file) {
   const buf = await file.arrayBuffer()
   if (/\.pdf$/i.test(file.name)) {
     const bytes = new Uint8Array(buf)
-    let autoFields = []
-    try {
-      autoFields = await detectPdfFields(bytes)
-    } catch (err) {
-      // Detection is best-effort — never block opening the document over it.
-      console.warn('PDF field auto-detection failed:', err)
-    }
-    return { bytes, autoFields }
+    const [autoFields, identity] = await Promise.all([
+      detectPdfFields(bytes).catch((err) => { console.warn('PDF field auto-detection failed:', err); return [] }),
+      sniffPdfIdentity(bytes).catch(() => extractIdentity('', file.name)),
+    ])
+    // Fall back to the filename for the title if the PDF text gave us nothing.
+    if (!identity.docTitle) identity.docTitle = file.name.replace(/\.pdf$/i, '')
+    return { bytes, autoFields, ...identity }
   }
   if (/\.docx$/i.test(file.name)) return await docxToPdf(buf)
   throw new Error('Unsupported file type. Please use a PDF or Word (.docx) file.')

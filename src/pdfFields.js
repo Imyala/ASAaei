@@ -2,6 +2,11 @@ import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
 import { PDFDocument } from 'pdf-lib'
 import { isStatusToken, isRemarksToken, OK_FAIL_NA, norm } from './fieldClassify.js'
+import { extractIdentity } from './docId.js'
+
+// Field labels we recognise in a details block (label → value on the same row).
+// Deliberately specific so the many prose "reading" pages don't sprout fields.
+const FIELD_LABELS = /^(site name|works?\s*plan number|inspected by|signature|sap id|log\s*book sheet( number)?|date( inspected)?|unit no\.?|work order|inspection type|serial( no)?|model no\.?|barcode|calibration( due)?( date)?|asset( no)?|equipment( no)?|technician|tech\s*cert)\b/i
 
 // ---------------------------------------------------------------------------
 // PDF field auto-detection
@@ -75,6 +80,34 @@ async function detectAcroForm(bytes) {
   return out
 }
 
+// Read the document's identity (AEI number / title) from the first few pages,
+// so the app can auto-apply a saved layout for that form. Best-effort.
+export async function sniffPdfIdentity(bytes) {
+  const worker = new pdfjsLib.PDFWorker({ port: new PdfWorker() })
+  const task = pdfjsLib.getDocument({ data: bytes.slice(), worker })
+  try {
+    const pdf = await task.promise
+    const maxP = Math.min(4, pdf.numPages)
+    let text = ''
+    for (let p = 1; p <= maxP; p++) {
+      const page = await pdf.getPage(p)
+      const tc = await page.getTextContent()
+      const byLine = new Map()
+      for (const it of tc.items) {
+        if (!it.str) continue
+        const key = Math.round(it.transform[5]) // baseline y
+        byLine.set(key, (byLine.get(key) || '') + it.str + ' ')
+      }
+      const lines = [...byLine.entries()].sort((a, b) => b[0] - a[0]).map((e) => e[1].trim())
+      text += lines.join('\n') + '\n'
+    }
+    return extractIdentity(text)
+  } finally {
+    task.destroy?.()
+    worker.destroy?.()
+  }
+}
+
 // ---- strategy 2: reconstruct the table from positioned text ---------------
 async function detectTextGrid(bytes) {
   const worker = new pdfjsLib.PDFWorker({ port: new PdfWorker() })
@@ -119,7 +152,8 @@ function detectPageGrid(items, pw, ph, pageIndex) {
       header = { line, status, remarks, score }
     }
   }
-  if (!header) return []
+  // No OK/Fail/N/A grid on this page — try a label→value details block instead.
+  if (!header) return detectLabelValue(lines, pw, ph, pageIndex)
 
   // Build status columns by clustering adjacent status tokens (so "OK / Fail /
   // N/A" collapses to one column, while "1M 3M 6M 1Y" stays four columns).
@@ -167,6 +201,37 @@ function detectPageGrid(items, pw, ph, pageIndex) {
       }
     }
     if (out.length > 500) break
+  }
+  return out
+}
+
+// A details block: rows like "Site name  ______", "SAP ID  ______",
+// "Inspected by (Signature)  ______". Place a text (or signature) field to the
+// right of each recognised label whose value area is empty.
+function detectLabelValue(lines, pw, ph, pageIndex) {
+  const out = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const labelTokens = line.tokens.filter((t) => t.x < pw * 0.55)
+    if (!labelTokens.length) continue
+    const labelText = norm(labelTokens.map((t) => t.str).join(' '))
+    // Must be a short label, not a sentence of prose from a reading page.
+    if (labelText.length > 40 || labelText.split(' ').length > 6) continue
+    if (!FIELD_LABELS.test(labelText)) continue
+
+    const rightOfLabel = Math.max(...labelTokens.map((t) => t.xr))
+    const hasValue = line.tokens.some((t) => t.x > rightOfLabel + 10)
+    if (hasValue) continue // value/next column already present
+
+    const isSig = /signature/i.test(labelText)
+    const x = rightOfLabel + 10
+    const w = Math.min(pw - 40 - x, pw * 0.42)
+    if (w < 40) continue
+    const rowTop = line.y - line.fs
+    const nextY = lines[i + 1] ? lines[i + 1].y : line.y + line.fs * 1.6
+    const h = clampNum(nextY - line.y, line.fs * 1.2, isSig ? line.fs * 2.6 : line.fs * 2)
+    out.push(mkField(isSig ? 'signature' : 'text', pageIndex, x, rowTop, w, h, pw, ph, [], labelText))
+    if (out.length > 24) break
   }
   return out
 }

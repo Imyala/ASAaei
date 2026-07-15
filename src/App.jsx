@@ -4,7 +4,7 @@ import { bakePdf, makeBlankPdf } from './bake.js'
 import { fileToPdfBytes } from './convert.js'
 import {
   listTemplates, loadTemplate, saveTemplate, deleteTemplate,
-  cacheDoc, getCachedDoc, exportTemplate, importTemplateJson,
+  cacheDoc, getCachedDoc, exportTemplate, importTemplateJson, findTemplateByDocKey,
 } from './store.js'
 import { searchWorkOrder, searchDocumentCentre } from './sap.js'
 
@@ -56,6 +56,11 @@ export default function App() {
   const [activeTemplateId, setActiveTemplateId] = useState(null)
   const [needSource, setNeedSource] = useState(false) // template chosen, waiting for document
   const [cachedDoc, setCachedDoc] = useState(null)
+  const [docKey, setDocKey] = useState('')
+  const [docTitle, setDocTitle] = useState('')
+  const [appliedTemplate, setAppliedTemplate] = useState('') // name of an auto-applied layout
+  const [selectedPages, setSelectedPages] = useState(new Set()) // page indices to fill
+  const [showPages, setShowPages] = useState(false)
 
   // work-order (SAP) search
   const [woInput, setWoInput] = useState('')
@@ -88,10 +93,45 @@ export default function App() {
     if (opts.fields !== undefined) setFields(opts.fields)
     if (opts.mode) setMode(opts.mode)
     if (opts.resetLock) setLocked(false)
+    // Which pages the tech works on. Prefer an explicit set (from a template),
+    // else the pages that actually have fields, else all pages.
+    const total = imgs.length
+    let sel
+    if (opts.pages && opts.pages.length) {
+      sel = opts.pages.filter((p) => p >= 0 && p < total)
+    } else {
+      const withFields = [...new Set((opts.fields || []).map((f) => f.page))].filter((p) => p >= 0 && p < total)
+      sel = withFields.length ? withFields : imgs.map((_, i) => i)
+    }
+    setSelectedPages(new Set(sel.length ? sel : imgs.map((_, i) => i)))
+    setShowPages(false)
     setSelectedId(null)
     setTool('select')
     setScreen('editor')
   }, [])
+
+  // Central open path: recognise the form and auto-apply a saved layout when we
+  // have one, otherwise use whatever the auto-detector found. Used by "New
+  // form" and by the work-order flow, so both benefit from saved layouts.
+  const openDocument = useCallback(async (bytes, name, meta = {}) => {
+    const { autoFields = [], docKey: dk = '', docTitle: dt = '' } = meta
+    setDocKey(dk); setDocTitle(dt)
+    let fields = autoFields.map((f) => ({ ...f, id: nextId() }))
+    let pages = null, applied = '', tId = null
+    const match = await findTemplateByDocKey(dk)
+    if (match) {
+      const tpl = await loadTemplate(match.id)
+      fields = instantiate(tpl.fields)
+      pages = tpl.pages && tpl.pages.length ? tpl.pages : null
+      applied = match.name; tId = match.id
+      await cacheDoc(match.id, name, bytes)
+    }
+    setActiveTemplateId(tId)
+    setAppliedTemplate(applied)
+    await showBytesInEditor(bytes, name, {
+      fields, mode: fields.length ? 'fill' : 'design', resetLock: true, pages,
+    })
+  }, [showBytesInEditor])
 
   // ---- file chosen (new design / reload / apply template) -----------------
   const onFileChosen = async (e) => {
@@ -101,18 +141,11 @@ export default function App() {
     const p = pendingRef.current || { action: 'new' }
     setBusy(/\.docx$/i.test(file.name) ? 'Converting Word document…' : 'Opening document…')
     try {
-      const { bytes, autoFields = [] } = await fileToPdfBytes(file)
+      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file)
       if (p.action === 'new') {
-        setActiveTemplateId(null)
-        // Word docs come back with the fillable cells already detected — drop
-        // the tech straight into fill mode when we found any, otherwise open a
-        // clean design canvas as before.
-        const detected = autoFields.map((f) => ({ ...f, id: nextId() }))
-        await showBytesInEditor(bytes, file.name, {
-          fields: detected,
-          mode: detected.length ? 'fill' : 'design',
-          resetLock: true,
-        })
+        // Recognise the form and auto-apply a saved layout if we have one;
+        // otherwise fall back to auto-detected fields (or a clean canvas).
+        await openDocument(bytes, file.name, { autoFields, docKey: dk, docTitle: dt })
       } else if (p.action === 'apply') {
         const tpl = await loadTemplate(p.templateId)
         setActiveTemplateId(p.templateId)
@@ -206,12 +239,8 @@ export default function App() {
       const blob = await resp.blob()
       const name = wo.documentName || `WO-${wo.number}.pdf`
       const file = new File([blob], name, { type: blob.type })
-      const { bytes, autoFields = [] } = await fileToPdfBytes(file)
-      setActiveTemplateId(null)
-      const detected = autoFields.map((f) => ({ ...f, id: nextId() }))
-      await showBytesInEditor(bytes, name, {
-        fields: detected, mode: detected.length ? 'fill' : 'design', resetLock: true,
-      })
+      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file)
+      await openDocument(bytes, name, { autoFields, docKey: dk, docTitle: dt })
     } catch (err) {
       alert(err.message || 'Could not open the work order document.')
     } finally {
@@ -246,13 +275,18 @@ export default function App() {
 
   const saveAsTemplate = async () => {
     if (!fields.length) { alert('Add some fields first.'); return }
-    const name = window.prompt('Name this form template (e.g. “Pump Inspection Sheet”):', fileName)
+    const name = window.prompt('Name this form template (e.g. “Pump Inspection Sheet”):', docTitle || fileName)
     if (!name) return
-    const tpl = await saveTemplate(name.trim(), fields)
+    const tpl = await saveTemplate(name.trim(), fields, {
+      docKey, docTitle, pages: [...selectedPages].sort((a, b) => a - b),
+    })
     setActiveTemplateId(tpl.id)
+    setAppliedTemplate(name.trim())
     if (pdfBytes) await cacheDoc(tpl.id, fileName + '.pdf', pdfBytes)
     await refreshTemplates()
-    alert(`Saved “${name}”. You can now reuse it from the home screen.`)
+    alert(docKey
+      ? `Saved “${name}”. Next time you open ${docKey} it will open ready to fill.`
+      : `Saved “${name}”. You can now reuse it from the home screen.`)
   }
 
   // ---- placing / editing fields (design mode) -----------------------------
@@ -334,8 +368,17 @@ export default function App() {
   }
 
   const goHome = () => {
-    setScreen('home'); setPages([]); setFields([]); setNeedSource(false); refreshTemplates()
+    setScreen('home'); setPages([]); setFields([]); setNeedSource(false)
+    setAppliedTemplate(''); setDocKey(''); setDocTitle(''); setShowPages(false)
+    setWoResult(null); setWoNotice(''); refreshTemplates()
   }
+
+  const togglePage = (i) => setSelectedPages((prev) => {
+    const next = new Set(prev)
+    next.has(i) ? next.delete(i) : next.add(i)
+    return next
+  })
+  const pagesWithFields = () => new Set(fields.map((f) => f.page))
 
   // ================= HOME SCREEN =================
   if (screen === 'home') {
@@ -390,7 +433,7 @@ export default function App() {
 
         <section className="actions">
           <button className="big primary" onClick={() => pickFile('new')}>
-            ＋ New form<small>Open a PDF/Word doc and lay out fields</small>
+            ＋ Open form<small>Open a PDF/Word doc — recognised forms open ready to fill</small>
           </button>
           <button className="big" onClick={startBlank}>
             ▢ Blank page<small>Experiment on an empty A4 sheet</small>
@@ -403,16 +446,16 @@ export default function App() {
         <h2>Saved form templates</h2>
         {busy && <div className="busy">{busy}</div>}
         {templates.length === 0 ? (
-          <p className="empty">No templates yet. Create a “New form”, add your fields, then
-            <b> Save as template</b> — after that, technicians just pick it here and fill the
-            latest document.</p>
+          <p className="empty">No saved layouts yet. Open a form, lay out the fields once (or adjust
+            the auto-detected ones), then <b>Save as template</b>. After that, whenever anyone opens
+            that same form — by file or by work order — it opens <b>ready to fill</b> automatically.</p>
         ) : (
           <ul className="tpllist">
             {templates.map((t) => (
               <li key={t.id} className="tplcard">
                 <div className="tplmeta">
                   <b>{t.name}</b>
-                  <small>{t.fieldCount} fields</small>
+                  <small>{t.fieldCount} fields{t.docKey ? ` · auto-applies to ${t.docKey}` : ''}</small>
                 </div>
                 <div className="tplactions">
                   <button className="primary" onClick={() => useTemplate(t)}>Use</button>
@@ -467,6 +510,7 @@ export default function App() {
           <button className="link" onClick={goHome}>← Home</button>
           <strong className="brand">ASAaei</strong>
           <span className="file">{fileName}</span>
+          {appliedTemplate && <span className="applied-chip" title="Saved layout applied automatically">✓ {appliedTemplate}</span>}
         </div>
 
         <div className="group modes">
@@ -487,6 +531,11 @@ export default function App() {
         )}
 
         <div className="group right">
+          {pages.length > 1 && (
+            <button className={showPages ? 'on' : ''} onClick={() => setShowPages((v) => !v)}>
+              ▤ Pages ({selectedPages.size}/{pages.length})
+            </button>
+          )}
           {mode === 'design' && !locked && <button onClick={saveAsTemplate}>💾 Save as template</button>}
           <button onClick={() => pickFile('reload', activeTemplateId)}>↻ Reload latest</button>
           {locked && <span className="locked-badge">🔒 Locked</span>}
@@ -496,13 +545,39 @@ export default function App() {
       </header>
 
       {busy && <div className="busy">{busy}</div>}
+      {appliedTemplate && (
+        <div className="applied-bar">✓ Opened ready to fill — saved layout <b>{appliedTemplate}</b> applied
+          {docKey ? <> for <code>{docKey}</code></> : null}.</div>
+      )}
       {mode === 'design' && tool !== 'select' && (
         <div className="hintbar">Tap on the page to place a <b>{TOOL_LABEL[tool]}</b>.</div>
       )}
 
+      {showPages && (
+        <div className="pagesbar">
+          <div className="pagesbar-head">
+            <b>Pages to fill</b>
+            <span className="muted">{selectedPages.size} of {pages.length} selected — untick the reading pages</span>
+            <span className="spacer" />
+            <button onClick={() => setSelectedPages(new Set(pages.map((_, i) => i)))}>All</button>
+            <button onClick={() => { const wf = pagesWithFields(); setSelectedPages(wf.size ? wf : new Set([0])) }}>Only pages with fields</button>
+            <button className="primary" onClick={() => setShowPages(false)}>Done</button>
+          </div>
+          <div className="pagesgrid">
+            {pages.map((pg, i) => (
+              <label key={i} className={'pagechip' + (selectedPages.has(i) ? ' on' : '')}>
+                <input type="checkbox" checked={selectedPages.has(i)} onChange={() => togglePage(i)} />
+                <img src={pg.dataUrl} alt="" draggable={false} />
+                <span>{i + 1}{fields.some((f) => f.page === i) ? ' •' : ''}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="stage">
         <div className="pagescroll">
-          {pages.map((pg, i) => (
+          {pages.map((pg, i) => (selectedPages.has(i) ? (
             <div key={i} className="pagewrap">
               <div className="page" data-page={i} onClick={(e) => onPageClick(e, i)}
                 style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}>
@@ -515,7 +590,7 @@ export default function App() {
                 ))}
               </div>
             </div>
-          ))}
+          ) : null))}
         </div>
 
         {mode === 'design' && selected && !locked && (

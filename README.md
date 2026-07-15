@@ -29,11 +29,19 @@ npm run preview  # serve the built version to try on other devices on your netwo
 - Open a **PDF or Word (.docx)** file — Word is converted to PDF in the browser — or start blank.
 - **Design form:** place text fields, dropdowns, OK/Fail/N/A groups, and signature blocks;
   drag to position; set labels and dropdown options.
+- **Opens ready to fill:** the app recognises a form by its document number (e.g. `AEI 3.4106`)
+  and, if you've saved a layout for it before, **re-applies that layout automatically** and opens
+  in fill mode — so after a one-time setup, that form is always ready. See "Auto-detect" and
+  "Save as template" below.
 - **Auto-detect fields (Word *and* PDF):** when a document is opened, the app pre-places the
-  fields for you — OK/Fail/N/A dropdowns in the status columns (including 1M/3M/6M/1Y) and text
-  fields for Remarks/comments and blank label→value cells — then drops you straight into fill
-  mode, so techs don't lay anything out. Word docs are read from their table structure; PDFs use
-  their embedded form fields when present, otherwise the table is reconstructed from the PDF text.
+  fields for you — OK/Fail/N/A dropdowns in the status columns (including 1M/3M/6M/1Y), text
+  fields for Remarks/comments and details blocks (Site name, SAP ID, Date…), and signature blocks
+  — then drops you into fill mode. Word docs are read from their table structure; PDFs use their
+  embedded form fields when present, otherwise the table/details are reconstructed from the PDF
+  text. (Detection is best-effort; the saved-layout recognition above is the reliable path.)
+- **Page picker:** long procedures have many reading pages before the fillable ones. The **Pages**
+  button lets you keep only the pages you fill; the app defaults to the pages that have fields.
+  Your selection is saved with the template.
 - **Work-order search (SAP + Document Centre):** enter a work order on the home screen and the
   app looks it up in SAP, automatically finds the matching form in the Document Centre, and opens
   it prefilled. This needs the in-network service in [`server/`](server/README.md); until it's

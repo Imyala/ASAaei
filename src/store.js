@@ -49,15 +49,22 @@ export async function listTemplates() {
 export async function loadTemplate(id) {
   return get('template:' + id)
 }
-export async function saveTemplate(name, fields) {
+export async function saveTemplate(name, fields, meta = {}) {
   const id = seq()
   const clean = fields.map(stripValue)
-  const tpl = { id, name, createdAt: new Date().toISOString(), fields: clean }
+  const { docKey = '', docTitle = '', pages = [] } = meta
+  const tpl = { id, name, createdAt: new Date().toISOString(), fields: clean, docKey, docTitle, pages }
   await set('template:' + id, tpl)
   const index = await listTemplates()
-  index.push({ id, name, createdAt: tpl.createdAt, fieldCount: clean.length })
+  index.push({ id, name, createdAt: tpl.createdAt, fieldCount: clean.length, docKey })
   await set(INDEX, index)
   return tpl
+}
+
+// Find the saved template whose form identity matches `docKey` (if any).
+export async function findTemplateByDocKey(docKey) {
+  if (!docKey) return null
+  return (await listTemplates()).find((t) => t.docKey && t.docKey === docKey) || null
 }
 export async function deleteTemplate(id) {
   await del('template:' + id)

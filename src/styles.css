@@ -87,6 +87,26 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 .busy { background: #fff7d6; padding: 6px 12px; border-bottom: 1px solid #eaddae; font-size: 14px; }
 .hintbar { background: #e8f0ff; padding: 6px 12px; font-size: 14px; color: #2a3d73; }
+.applied-bar { background: #e8f7ee; color: #1f7a44; padding: 6px 12px; font-size: 13px; border-bottom: 1px solid #c9e9d5; }
+.applied-bar code { background: #d3efdd; padding: 1px 5px; border-radius: 4px; }
+.applied-chip { background: #e8f7ee; color: #1f7a44; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
+
+/* ---------- page picker ---------- */
+.pagesbar { background: #fff; border-bottom: 1px solid var(--line); padding: 10px 12px; }
+.pagesbar-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.pagesbar-head .spacer { flex: 1; }
+.pagesbar-head .muted { color: #778; font-size: 13px; }
+.pagesbar-head button { padding: 6px 10px; font-size: 13px; }
+.pagesgrid { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.pagechip {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  border: 2px solid var(--line); border-radius: 8px; padding: 4px; cursor: pointer;
+  background: #f7f8fb; opacity: .5; width: 78px;
+}
+.pagechip.on { opacity: 1; border-color: var(--blue-2); background: #fff; }
+.pagechip img { width: 66px; height: 90px; object-fit: cover; object-position: top; border: 1px solid var(--line); background: #fff; }
+.pagechip span { font-size: 11px; color: #556; }
+.pagechip input { margin: 0; }
 
 /* ---------- stage ---------- */
 .stage { flex: 1; display: flex; overflow: hidden; }
