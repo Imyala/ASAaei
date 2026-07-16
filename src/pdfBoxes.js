@@ -1,6 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
-import { isStatusToken, norm } from './fieldClassify.js'
+import { buildCells, cellsToFields } from './pdfGrid.js'
 
 // ---------------------------------------------------------------------------
 // Ruled-box detection
@@ -28,7 +28,11 @@ export async function detectPdfBoxes(bytes) {
       const cells = buildCells(hlines, vlines, rects, pw, ph)
       const texts = textContent.items
         .filter((it) => it.str && it.str.trim())
-        .map((it) => ({ str: it.str.trim(), x: it.transform[4], xr: it.transform[4] + (it.width || 0), yTop: ph - it.transform[5] }))
+        .map((it) => {
+          const tr = it.transform
+          const fs = Math.abs(tr[3]) || Math.abs(tr[0]) || it.height || 9
+          return { str: it.str.trim(), x: tr[4], xr: tr[4] + (it.width || 0), yTop: ph - tr[5], h: fs }
+        })
       fields.push(...cellsToFields(cells, texts, pw, ph, p - 1))
       if (fields.length > 800) break
     }
@@ -88,93 +92,4 @@ function collectGeometry(opList, ph) {
     }
   }
   return { hlines, vlines, rects }
-}
-
-// Build closed cell rectangles from the line grid (and keep explicit rects).
-// Reconstruction is done per horizontal band using only the vertical lines that
-// actually span that band, so an unrelated table's borders can't fragment a
-// grid's columns (and vice-versa).
-function buildCells(hlines, vlines, rects, pw, ph) {
-  const cells = []
-  const seen = new Set()
-  const push = (r) => {
-    if (r.w < 14 || r.h < 8 || r.w > pw * 0.92 || r.h > ph * 0.55) return
-    const key = `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.w)},${Math.round(r.h)}`
-    if (seen.has(key)) return
-    seen.add(key); cells.push(r)
-  }
-  for (const r of rects) push(r) // explicit rectangles are cells directly
-
-  const ys = cluster(hlines.map((h) => h.y))
-  const xsAll = cluster(vlines.map((v) => v.x))
-  const hAt = (y, x1, x2) => hlines.some((h) => Math.abs(h.y - y) <= 3 && h.x1 <= x1 + 3 && h.x2 >= x2 - 3)
-  const vSpan = (x, y1, y2) => vlines.some((v) => Math.abs(v.x - x) <= 3 && v.y1 <= y1 + 3 && v.y2 >= y2 - 3)
-
-  for (let j = 0; j < ys.length - 1; j++) {
-    const y1 = ys[j], y2 = ys[j + 1]
-    if (y2 - y1 < 8) continue
-    const vs = xsAll.filter((x) => vSpan(x, y1, y2)) // only verticals bounding this band
-    for (let k = 0; k < vs.length - 1; k++) {
-      const x1 = vs[k], x2 = vs[k + 1]
-      if (hAt(y1, x1, x2) && hAt(y2, x1, x2)) push({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 })
-    }
-  }
-  return cells
-}
-
-// Turn empty cells into fields, classified by width and column header.
-function cellsToFields(cells, texts, pw, ph, pageIndex) {
-  if (cells.length < 4) return [] // not a form grid on this page
-  const out = []
-  const median = medianOf(cells.map((c) => c.w)) || 40
-
-  for (const c of cells) {
-    // skip cells that already contain text (labels / filled values)
-    const cx = c.x + c.w / 2, cy = c.y + c.h / 2
-    const hasText = texts.some((t) => t.x < cx && t.xr > c.x && t.yTop > c.y - 2 && t.yTop < c.y + c.h + 2 && overlapX(t, c) > 4)
-    if (hasText) continue
-
-    // status if the column is narrow, or a status header sits above it
-    const narrow = c.w < Math.min(median * 0.7, pw * 0.09)
-    const headerStatus = texts.some((t) => isStatusToken(t.str) && t.x < cx && t.xr > c.x && t.yTop < c.y)
-    let type = narrow || headerStatus ? 'status' : 'text'
-
-    // the row label sits to the left of the cell on the same row — use it as
-    // the field label so profile autofill (SAP ID, name, date) still works
-    const rowLabel = norm(texts
-      .filter((t) => t.xr <= c.x + 4 && t.yTop > c.y - 2 && t.yTop < c.y + c.h + 4)
-      .sort((a, b) => a.x - b.x).map((t) => t.str).join(' ')).slice(-48)
-
-    if (type === 'text' && /signature/i.test(rowLabel)) type = 'signature'
-
-    const pad = 1.5
-    out.push({
-      type, page: pageIndex, options: [], value: type === 'signature' ? null : '', auto: true,
-      label: type === 'status' ? 'Result' : (rowLabel || (type === 'signature' ? 'Signature' : 'Entry')),
-      xPct: (c.x + pad) / pw, yPct: (c.y + pad) / ph,
-      wPct: (c.w - pad * 2) / pw, hPct: (c.h - pad * 2) / ph,
-    })
-    if (out.length > 800) break
-  }
-  return out
-}
-
-function overlapX(t, c) { return Math.min(t.xr, c.x + c.w) - Math.max(t.x, c.x) }
-
-// Cluster nearby coordinates into representative positions.
-function cluster(values, tol = 2.5) {
-  const s = [...values].sort((a, b) => a - b)
-  const out = []
-  for (const v of s) {
-    if (out.length && Math.abs(v - out[out.length - 1]) <= tol) continue
-    out.push(v)
-  }
-  return out
-}
-
-function medianOf(arr) {
-  if (!arr.length) return 0
-  const s = [...arr].sort((a, b) => a - b)
-  const m = Math.floor(s.length / 2)
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
