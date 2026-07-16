@@ -34,11 +34,13 @@ npm run preview  # serve the built version to try on other devices on your netwo
   in fill mode — so after a one-time setup, that form is always ready. See "Auto-detect" and
   "Save as template" below.
 - **Auto-detect fields (Word *and* PDF):** when a document is opened, the app pre-places the
-  fields for you — OK/Fail/N/A dropdowns in the status columns (including 1M/3M/6M/1Y), text
-  fields for Remarks/comments and details blocks (Site name, SAP ID, Date…), and signature blocks
-  — then drops you into fill mode. Word docs are read from their table structure; PDFs use their
-  embedded form fields when present, otherwise the table/details are reconstructed from the PDF
-  text. (Detection is best-effort; the saved-layout recognition above is the reliable path.)
+  fields for you and drops you into fill mode. For PDFs it reads the document's **actual ruled
+  boxes** (the drawn table cells) and puts a field precisely inside each empty one — so fields sit
+  neatly in the boxes and none are missed, including grids that have no text to anchor to. It
+  classifies each box (OK/Fail/N/A tap-cell for narrow status columns, text for wider cells,
+  signature next to a "Signature" label) and labels detail cells from the text beside them (so
+  profile autofill works). Word docs are read from their table structure; PDFs with embedded form
+  fields use those directly. (Detection re-runs on every open, so re-issued versions still fill.)
 - **Tap OK / Fail / N/A:** status cells are a single tap-cycle — blank → **OK** → **Fail** →
   **N/A** → blank — so a whole column is a few taps, no dropdowns.
 - **Profile autofill:** set your name + SAP ID once on the home screen; every form opens with your

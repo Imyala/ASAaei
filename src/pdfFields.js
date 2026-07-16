@@ -3,6 +3,7 @@ import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
 import { PDFDocument } from 'pdf-lib'
 import { isStatusToken, isRemarksToken, norm } from './fieldClassify.js'
 import { extractIdentity } from './docId.js'
+import { detectPdfBoxes } from './pdfBoxes.js'
 
 // Field labels we recognise in a details block (label → value on the same row).
 // Deliberately specific so the many prose "reading" pages don't sprout fields.
@@ -21,8 +22,13 @@ const FIELD_LABELS = /^(site name|works?\s*plan number|inspected by|signature|sa
 // Everything is returned as page-relative fractions, matching the editor model.
 
 export async function detectPdfFields(bytes) {
+  // 1. Existing form fields (most reliable when present).
   const viaForm = await detectAcroForm(bytes).catch(() => [])
   if (viaForm.length) return viaForm
+  // 2. Ruled boxes — a field inside each real cell (best alignment + coverage).
+  const viaBoxes = await detectPdfBoxes(bytes).catch(() => [])
+  if (viaBoxes.length >= 4) return viaBoxes
+  // 3. Fall back to reconstructing the table from positioned text.
   return detectTextGrid(bytes).catch(() => [])
 }
 
