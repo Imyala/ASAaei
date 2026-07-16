@@ -45,34 +45,54 @@ function rectOverlap(a, b) {
   return x > 0 && y > 0 ? x * y : 0
 }
 
-// Remove cells that would put two input boxes inside one visual box:
-//   1. Near-duplicates — an explicit rectangle and the same box reconstructed
-//      from its four edges land a couple of pixels apart, so the integer-keyed
-//      `seen` set keeps both. Collapse any pair that mostly overlaps and is
-//      close in size, keeping the smaller (tighter to the printed box).
-//   2. Container frames — an outer section border (or the whole table frame)
-//      that encloses two or more smaller cells is not an input; its children
-//      are. Dropping it stops one giant field covering a block of cells.
+// Collapse redundant rectangles so one visual box yields one field. These forms
+// (Word exported to PDF) draw, for every answer cell, BOTH the real ruled table
+// cell AND one or more smaller invisible content-control placeholders nested
+// inside it — so a single box sprouts two or three overlapping fields ("two
+// boxes in one"). The same box is also often drawn twice (an explicit rectangle
+// plus the same box reconstructed from its edges).
+//
+// Two passes:
+//   1. Drop near-identical duplicates (same box, ~same size, high overlap).
+//   2. Resolve nesting: keep the OUTER ruled cell and drop the placeholders
+//      inside it — UNLESS the outer is a big table/section frame (much larger
+//      than a normal cell in BOTH axes), in which case it's not an input and we
+//      keep its children instead.
 export function dedupeCells(cells) {
   const area = (c) => c.w * c.h
-  const bySize = [...cells].sort((a, b) => area(a) - area(b)) // smallest first
-  const kept = []
-  for (const c of bySize) {
-    const dup = kept.some((k) => {
-      const ov = rectOverlap(c, k)
-      if (!ov) return false
+  // pass 1 — near-identical duplicates (process largest-first, keep the first).
+  const uniq = []
+  for (const c of [...cells].sort((a, b) => area(b) - area(a))) {
+    const dup = uniq.some((k) => {
       const lo = Math.min(area(c), area(k)), hi = Math.max(area(c), area(k))
-      return ov >= 0.7 * lo && lo >= 0.6 * hi
+      return lo >= 0.9 * hi && rectOverlap(c, k) >= 0.8 * lo
     })
-    if (!dup) kept.push(c)
+    if (!dup) uniq.push(c)
   }
-  return kept.filter((c) => {
-    let inside = 0
-    for (const o of kept) {
-      if (o === c || area(o) > area(c) * 0.7) continue
-      const ocx = o.x + o.w / 2, ocy = o.y + o.h / 2
-      if (ocx > c.x && ocx < c.x + c.w && ocy > c.y && ocy < c.y + c.h && ++inside >= 2) return false
+  if (uniq.length < 2) return uniq
+
+  // pass 2 — nesting. A frame is a container far bigger than a typical cell in
+  // both width and height (a whole table or a boxed section), so its children
+  // are the real cells; a normal cell is only a little bigger than the
+  // placeholders it wraps, so the cell itself is the field.
+  const medW = medianOf(uniq.map((c) => c.w)) || 1
+  const medH = medianOf(uniq.map((c) => c.h)) || 1
+  const isFrame = (c) => c.w > medW * 3 && c.h > medH * 3
+  const contains = (B, A) => area(A) < area(B) * 0.98 && rectOverlap(A, B) >= 0.8 * area(A)
+
+  // parent = the smallest cell that contains it
+  const parent = uniq.map((a, i) => {
+    let best = -1, bestArea = Infinity
+    for (let j = 0; j < uniq.length; j++) {
+      if (j === i) continue
+      if (contains(uniq[j], a) && area(uniq[j]) < bestArea) { best = j; bestArea = area(uniq[j]) }
     }
+    return best
+  })
+  return uniq.filter((c, i) => {
+    if (isFrame(c) && uniq.some((o, j) => j !== i && contains(c, o))) return false // table/section frame
+    // a nested cell whose container is a normal cell is a placeholder → drop it
+    if (parent[i] >= 0 && !isFrame(uniq[parent[i]])) return false
     return true
   })
 }
@@ -132,10 +152,17 @@ export function cellsToFields(cells, texts, pw, ph, pageIndex) {
     // skip empty cells that sit on the printed header/title row
     if (inHeaderRow(c)) continue
 
-    // status if the column is narrow, or a status header sits above it
+    // status if the column is narrow, or a narrow-ish column has a status header
+    // (OK/Fail or 1M/3M/6M/1Y) directly above it. The header must be a real
+    // status column heading — narrow and vertically aligned — so a wide free-text
+    // box lower on the page (Parts Used, Comments) can't inherit "status" from
+    // the frequency headers far above it.
     const narrow = c.w < Math.min(median * 0.7, pw * 0.09)
-    const headerStatus = texts.some((t) =>
-      isStatusToken(t.str) && t.yTop < c.y && Math.min(t.xr, c.x + c.w) - Math.max(t.x, c.x) > 4)
+    const headerStatus = c.w < pw * 0.16 && texts.some((t) => {
+      if (!isStatusToken(t.str) || t.yTop >= c.y) return false
+      const tcx = (t.x + t.xr) / 2
+      return tcx > c.x - 2 && tcx < c.x + c.w + 2 // header sits in this column
+    })
     let type = narrow || headerStatus ? 'status' : 'text'
 
     // the row label sits to the left of the cell on the same row — use it as

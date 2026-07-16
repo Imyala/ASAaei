@@ -40,14 +40,28 @@ console.log('dedupeCells — one field per visual box')
   const b = { x: 102, y: 101, w: 88, h: 21 }
   ok(dedupeCells([a, b]).length === 1, `near-duplicate cells collapse to one (got ${dedupeCells([a, b]).length})`)
 
-  // 2) an outer frame enclosing two inner cells is dropped (its children remain).
-  const frame = { x: 40, y: 40, w: 300, h: 60 }
-  const c1 = { x: 50, y: 50, w: 120, h: 40 }
-  const c2 = { x: 200, y: 50, w: 120, h: 40 }
-  const kept = dedupeCells([frame, c1, c2])
-  ok(!kept.includes(frame) && kept.length === 2, `container frame dropped, inner cells kept (got ${kept.length})`)
+  // 2) a nested content-control placeholder (or two, stacked) inside a real
+  //    answer cell must be dropped, keeping the OUTER visible cell — this is the
+  //    "two boxes in one" symptom. Sizes mirror the real forms (18x28 cell with
+  //    13x14 + 13x8 placeholders), amid a column of like-sized sibling cells.
+  const cell = { x: 300, y: 100, w: 18, h: 28 }
+  const ph1 = { x: 302, y: 101, w: 13, h: 14 }
+  const ph2 = { x: 302, y: 118, w: 13, h: 8 }
+  const sib1 = { x: 300, y: 130, w: 18, h: 28 }
+  const sib2 = { x: 300, y: 160, w: 18, h: 28 }
+  const kept2 = dedupeCells([cell, ph1, ph2, sib1, sib2])
+  ok(kept2.some((c) => c.h === 28 && c.y === 100) && !kept2.some((c) => c.w === 13),
+    `nested placeholders dropped, outer cell kept (got ${kept2.map((c) => c.w + 'x' + c.h).join(',')})`)
 
-  // 3) two genuinely separate adjacent cells are both kept.
+  // 3) a big table frame (far larger than a normal cell in both axes, enclosing
+  //    a grid of real cells) is dropped; its children remain.
+  const frame = { x: 40, y: 40, w: 400, h: 300 }
+  const grid = []
+  for (let r = 0; r < 3; r++) for (let cc = 0; cc < 3; cc++) grid.push({ x: 60 + cc * 120, y: 60 + r * 90, w: 90, h: 60 })
+  const kept = dedupeCells([frame, ...grid])
+  ok(!kept.includes(frame) && kept.length === grid.length, `table frame dropped, inner cells kept (got ${kept.length})`)
+
+  // 4) two genuinely separate adjacent cells are both kept.
   ok(dedupeCells([{ x: 0, y: 0, w: 50, h: 20 }, { x: 60, y: 0, w: 50, h: 20 }]).length === 2, 'separate cells both kept')
 }
 

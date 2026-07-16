@@ -22,16 +22,26 @@ export async function detectPdfBoxes(bytes) {
     const pdf = await task.promise
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p)
-      const { width: pw, height: ph } = page.getViewport({ scale: 1 })
+      // Work in VIEWPORT space (scale 1). convertToViewportPoint folds in the
+      // page's /Rotate, so geometry and text land in the same coordinate frame as
+      // the rendered image for portrait AND rotated-landscape pages alike — page
+      // fractions then overlay correctly whatever the rotation.
+      const vp = page.getViewport({ scale: 1 })
+      const { width: pw, height: ph } = vp
+      const toVP = (x, y) => vp.convertToViewportPoint(x, y)
       const [opList, textContent] = await Promise.all([page.getOperatorList(), page.getTextContent()])
-      const { hlines, vlines, rects } = collectGeometry(opList, ph)
+      const { hlines, vlines, rects } = collectGeometry(opList, toVP)
       const cells = buildCells(hlines, vlines, rects, pw, ph)
       const texts = textContent.items
         .filter((it) => it.str && it.str.trim())
         .map((it) => {
           const tr = it.transform
-          const fs = Math.abs(tr[3]) || Math.abs(tr[0]) || it.height || 9
-          return { str: it.str.trim(), x: tr[4], xr: tr[4] + (it.width || 0), yTop: ph - tr[5], h: fs }
+          const adv = it.width || 0
+          const un = Math.hypot(tr[0], tr[1]) || 1
+          const [x0, y0] = toVP(tr[4], tr[5])                                       // baseline start
+          const [x1, y1] = toVP(tr[4] + adv * tr[0] / un, tr[5] + adv * tr[1] / un) // baseline end
+          const fs = Math.hypot(tr[2], tr[3]) || Math.hypot(tr[0], tr[1]) || it.height || 9
+          return { str: it.str.trim(), x: Math.min(x0, x1), xr: Math.max(x0, x1), yTop: Math.min(y0, y1), h: fs }
         })
       fields.push(...cellsToFields(cells, texts, pw, ph, p - 1))
       if (fields.length > 800) break
@@ -44,15 +54,16 @@ export async function detectPdfBoxes(bytes) {
 }
 
 // Walk the operator list, tracking the CTM, and collect axis-aligned lines and
-// rectangles in top-origin point coordinates.
-function collectGeometry(opList, ph) {
+// rectangles in viewport (rotated, top-origin) point coordinates. `toVP` maps a
+// user-space point into that frame (page rotation included).
+function collectGeometry(opList, toVP) {
   const { fnArray, argsArray } = opList
   const hlines = [] // { y, x1, x2 }
   const vlines = [] // { x, y1, y2 }
   const rects = []  // { x, y, w, h } top-origin
   let ctm = [1, 0, 0, 1, 0, 0]
   const stack = []
-  const toTop = (pt) => [pt[0], ph - pt[1]]
+  const toTop = (pt) => toVP(pt[0], pt[1])
 
   const addSeg = (ax, ay, bx, by) => {
     if (Math.abs(ay - by) <= 1.2 && Math.abs(ax - bx) > 3) hlines.push({ y: (ay + by) / 2, x1: Math.min(ax, bx), x2: Math.max(ax, bx) })
