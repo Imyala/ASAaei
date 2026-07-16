@@ -156,6 +156,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .statuscell.blank { color: #b3bac6; }
 .statuscell:disabled { opacity: .9; }
 
+/* Per-page toggle: switch this page's OK/N/A/Fail cells to typed entry. */
+.manualtoggle {
+  position: absolute; top: 6px; left: 6px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(42,61,115,.92); color: #fff;
+  font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 6px;
+  cursor: pointer; user-select: none; box-shadow: 0 1px 4px rgba(0,0,0,.28);
+}
+.manualtoggle input { width: 15px; height: 15px; margin: 0; accent-color: #34c07a; cursor: pointer; }
+
 .signbtn { width: 100%; height: 100%; background: #eef2fb; border: 1px dashed var(--blue-2); color: var(--blue); font-size: 12px; }
 .sigdone {
   width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center;

@@ -3,7 +3,7 @@
 // rules in one place means a column that reads as "status" in a Word doc reads
 // the same way in a PDF.
 
-export const OK_FAIL_NA = ['OK', 'Fail', 'N/A']
+export const OK_FAIL_NA = ['OK', 'N/A', 'Fail']
 
 const RX = {
   remarks: /remark|comment|note|observation|action|finding/i,

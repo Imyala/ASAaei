@@ -45,7 +45,7 @@ export async function bakePdf(originalBytes, fields) {
     } else if (f.type === 'checkgroup') {
       const size = Math.max(8, Math.min(12, fh * 0.6))
       let cx = x
-      for (const opt of ['OK', 'Fail', 'N/A']) {
+      for (const opt of ['OK', 'N/A', 'Fail']) {
         const mark = f.value === opt ? '[X]' : '[  ]'
         const t = `${mark} ${opt}   `
         page.drawText(t, { x: cx, y: yBottom + (fh - size) / 2, size, font })

@@ -24,8 +24,8 @@ const TOOL_LABEL = {
   dropdown: 'Dropdown',
   signature: 'Signature',
 }
-// Tri-state tap control: blank → OK → Fail → N/A → blank.
-const STATUS_CYCLE = ['', 'OK', 'Fail', 'N/A']
+// Tri-state tap control: blank → OK → N/A → Fail → blank.
+const STATUS_CYCLE = ['', 'OK', 'N/A', 'Fail']
 const nextStatus = (v) => STATUS_CYCLE[(STATUS_CYCLE.indexOf(v) + 1) % STATUS_CYCLE.length]
 
 let idCounter = 1
@@ -66,6 +66,7 @@ export default function App() {
   const [appliedTemplate, setAppliedTemplate] = useState('') // name of an auto-applied layout
   const [selectedPages, setSelectedPages] = useState(new Set()) // page indices to fill
   const [showPages, setShowPages] = useState(false)
+  const [manualPages, setManualPages] = useState(new Set()) // pages where status cells are typed, not tapped
   const [profile, setProfileState] = useState(getProfile())
   const updateProfile = (patch) => {
     const p = { ...profile, ...patch }
@@ -115,6 +116,7 @@ export default function App() {
     }
     setSelectedPages(new Set(sel.length ? sel : imgs.map((_, i) => i)))
     setShowPages(false)
+    setManualPages(new Set())
     setSelectedId(null)
     setTool('select')
     setScreen('editor')
@@ -394,6 +396,11 @@ export default function App() {
     next.has(i) ? next.delete(i) : next.add(i)
     return next
   })
+  const togglePageManual = (i) => setManualPages((prev) => {
+    const next = new Set(prev)
+    next.has(i) ? next.delete(i) : next.add(i)
+    return next
+  })
   const pagesWithFields = () => new Set(fields.map((f) => f.page))
 
   // ================= HOME SCREEN =================
@@ -609,9 +616,16 @@ export default function App() {
               <div className="page" data-page={i} onClick={(e) => onPageClick(e, i)}
                 style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}>
                 <img src={pg.dataUrl} alt={`Page ${i + 1}`} draggable={false} />
+                {fields.some((f) => f.page === i && f.type === 'status') && (
+                  <label className="manualtoggle" title="Type figures instead of tapping OK / N/A / Fail on this page"
+                    onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={manualPages.has(i)} onChange={() => togglePageManual(i)} />
+                    123 Manual entry
+                  </label>
+                )}
                 {fields.filter((f) => f.page === i).map((f) => (
                   <FieldView key={f.id} field={f} mode={mode} tool={tool} locked={locked}
-                    selected={f.id === selectedId} onSelect={() => setSelectedId(f.id)}
+                    selected={f.id === selectedId} manual={manualPages.has(i)} onSelect={() => setSelectedId(f.id)}
                     onChange={(patch) => updateField(f.id, patch)} onSign={() => signField(f)}
                     onPointerDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'))} />
                 ))}
@@ -661,7 +675,7 @@ function clamp(v, lo, hi) {
 }
 
 // ---- one field, rendered on the page -------------------------------------
-function FieldView({ field: f, mode, tool, locked, selected, onSelect, onChange, onSign, onPointerDown }) {
+function FieldView({ field: f, mode, tool, locked, selected, manual, onSelect, onChange, onSign, onPointerDown }) {
   const style = {
     left: `${f.xPct * 100}%`, top: `${f.yPct * 100}%`,
     width: `${f.wPct * 100}%`, height: `${f.hPct * 100}%`,
@@ -693,15 +707,24 @@ function FieldView({ field: f, mode, tool, locked, selected, onSelect, onChange,
         </select>
       )}
       {f.type === 'status' && (
-        <button className={'statuscell ' + (f.value ? f.value.replace('/', '') : 'blank')}
-          disabled={readOnly} title="Tap: OK → Fail → N/A"
-          onClick={() => onChange({ value: nextStatus(f.value) })}>
-          {f.value || '–'}
-        </button>
+        // When the page is in manual-entry mode, a status cell becomes a plain
+        // text box so figures (readings, measurements) can be typed instead of
+        // tapping OK / N/A / Fail.
+        manual ? (
+          <input className="ctl" value={String(f.value ?? '')} disabled={readOnly}
+            inputMode="numeric" placeholder={f.label && f.label !== 'Result' ? f.label : ''}
+            onChange={(e) => onChange({ value: e.target.value })} />
+        ) : (
+          <button className={'statuscell ' + (f.value ? String(f.value).replace('/', '') : 'blank')}
+            disabled={readOnly} title="Tap: OK → N/A → Fail"
+            onClick={() => onChange({ value: nextStatus(f.value) })}>
+            {f.value || '–'}
+          </button>
+        )
       )}
       {f.type === 'checkgroup' && (
         <div className="checkgroup">
-          {['OK', 'Fail', 'N/A'].map((o) => (
+          {['OK', 'N/A', 'Fail'].map((o) => (
             <button key={o} disabled={readOnly} className={f.value === o ? 'on ' + o : ''}
               onClick={() => onChange({ value: f.value === o ? '' : o })}>{o}</button>
           ))}
