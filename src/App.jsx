@@ -120,21 +120,25 @@ export default function App() {
     setScreen('editor')
   }, [])
 
-  // Central open path: recognise the form and auto-apply a saved layout when we
-  // have one, otherwise use whatever the auto-detector found. Used by "New
-  // form" and by the work-order flow, so both benefit from saved layouts.
+  // Central open path. LIVE DETECTION ALWAYS WINS: the fields are read fresh
+  // from this document every time, so a re-issued/edited form just works with no
+  // setup. A saved layout is only a silent fallback for a form the detector
+  // can't read — it never overrides good detection (which would go stale when
+  // the document changes). Used by "Open form" and the work-order flow.
   const openDocument = useCallback(async (bytes, name, meta = {}) => {
     const { autoFields = [], docKey: dk = '', docTitle: dt = '' } = meta
     setDocKey(dk); setDocTitle(dt)
     let fields = autoFields.map((f) => ({ ...f, id: nextId() }))
     let pages = null, applied = '', tId = null
-    const match = await findTemplateByDocKey(dk)
-    if (match) {
-      const tpl = await loadTemplate(match.id)
-      fields = instantiate(tpl.fields)
-      pages = tpl.pages && tpl.pages.length ? tpl.pages : null
-      applied = match.name; tId = match.id
-      await cacheDoc(match.id, name, bytes)
+    if (fields.length === 0) {
+      const match = await findTemplateByDocKey(dk)
+      if (match) {
+        const tpl = await loadTemplate(match.id)
+        fields = instantiate(tpl.fields)
+        pages = tpl.pages && tpl.pages.length ? tpl.pages : null
+        applied = match.name; tId = match.id
+        await cacheDoc(match.id, name, bytes)
+      }
     }
     // Fill the tech's own recurring fields (name, SAP ID, date) up front.
     fields = applyProfile(fields, getProfile())
@@ -455,7 +459,7 @@ export default function App() {
 
         <section className="actions">
           <button className="big primary" onClick={() => pickFile('new')}>
-            ＋ Open form<small>Open a PDF/Word doc — recognised forms open ready to fill</small>
+            ＋ Open form<small>Open any PDF/Word doc — fields are detected automatically, ready to fill</small>
           </button>
           <button className="big" onClick={startBlank}>
             ▢ Blank page<small>Experiment on an empty A4 sheet</small>
@@ -465,12 +469,13 @@ export default function App() {
           </button>
         </section>
 
-        <h2>Saved form templates</h2>
+        <h2>Saved layouts <span className="muted">— optional</span></h2>
         {busy && <div className="busy">{busy}</div>}
         {templates.length === 0 ? (
-          <p className="empty">No saved layouts yet. Open a form, lay out the fields once (or adjust
-            the auto-detected ones), then <b>Save as template</b>. After that, whenever anyone opens
-            that same form — by file or by work order — it opens <b>ready to fill</b> automatically.</p>
+          <p className="empty">You don’t need any of these. Every form you open is filled in
+            <b> automatically</b> — the app reads that document’s own boxes each time, so re-issued
+            versions just work with nothing to set up. Saving a layout here is only a fallback for
+            an odd form the detector can’t read; it never overrides automatic detection.</p>
         ) : (
           <ul className="tpllist">
             {templates.map((t) => (
