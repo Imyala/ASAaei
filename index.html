@@ -5,6 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <title>ASAaei — Document Fill &amp; Sign</title>
+    <script>
+      // Self-heal against a blank screen. The usual cause after a redeploy is a
+      // stale service-worker cache from an earlier (broken) build still serving
+      // hashed asset URLs that now 404 — the module never loads and #root stays
+      // empty. If we detect that, we unregister the service worker, wipe the
+      // caches and reload ONCE. A sessionStorage guard stops a reload loop if
+      // the blank screen has some other cause; a healthy render clears it.
+      (function () {
+        var GUARD = 'asaaei:self-healed'
+        function heal(reason) {
+          if (sessionStorage.getItem(GUARD)) return // already tried this session
+          try { sessionStorage.setItem(GUARD, reason || '1') } catch (e) {}
+          var jobs = []
+          if ('serviceWorker' in navigator) {
+            jobs.push(
+              navigator.serviceWorker.getRegistrations()
+                .then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister() })) })
+                .catch(function () {})
+            )
+          }
+          if (window.caches && caches.keys) {
+            jobs.push(
+              caches.keys()
+                .then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k) })) })
+                .catch(function () {})
+            )
+          }
+          var reload = function () { location.reload() }
+          Promise.all(jobs).then(reload, reload)
+        }
+        // A failed app script/stylesheet is the clearest blank-screen signal.
+        window.addEventListener('error', function (e) {
+          var t = e && e.target
+          if (t && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) heal('asset')
+        }, true)
+        // Fallback: nothing mounted shortly after load → treat as blank.
+        window.addEventListener('load', function () {
+          setTimeout(function () {
+            var root = document.getElementById('root')
+            if (!root || root.childElementCount === 0) heal('empty')
+            else { try { sessionStorage.removeItem(GUARD) } catch (e) {} }
+          }, 4000)
+        })
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
