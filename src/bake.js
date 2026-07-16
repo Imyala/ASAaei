@@ -10,14 +10,33 @@ import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib'
 // draw the glyphs rotated to match — otherwise baked values land in the wrong
 // place on landscape (rotated) inspection sheets. Portrait pages (rotate 0) go
 // through the identity mapping and bake exactly as before.
-export async function bakePdf(originalBytes, fields) {
-  const pdfDoc = await PDFDocument.load(originalBytes)
+// `pageOrder`, when given, is the list of ORIGINAL page indices to keep, in the
+// order to keep them (from the page picker — selection + drag reorder). The
+// output then contains only those pages, reordered, with each field baked onto
+// every place its source page now appears. Omit it to bake the whole document.
+export async function bakePdf(originalBytes, fields, pageOrder) {
+  const src = await PDFDocument.load(originalBytes)
+  let pdfDoc
+  if (pageOrder && pageOrder.length) {
+    pdfDoc = await PDFDocument.create()
+    const copied = await pdfDoc.copyPages(src, pageOrder)
+    copied.forEach((p) => pdfDoc.addPage(p))
+  } else {
+    pdfDoc = src
+  }
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
   const pages = pdfDoc.getPages()
+  // original page index -> the new indices it maps to (usually one, but a page
+  // could in principle be included more than once).
+  const targetsFor = (origPage) =>
+    pageOrder && pageOrder.length
+      ? pageOrder.reduce((acc, orig, i) => (orig === origPage ? (acc.push(i), acc) : acc), [])
+      : (pages[origPage] ? [origPage] : [])
 
   for (const f of fields) {
-    const page = pages[f.page]
+    for (const ti of targetsFor(f.page)) {
+    const page = pages[ti]
     if (!page) continue
     const { width: uw, height: uh } = page.getSize() // unrotated user-space size
     const r = ((page.getRotation().angle % 360) + 360) % 360
@@ -75,6 +94,7 @@ export async function bakePdf(originalBytes, fields) {
       const nameSize = Math.max(9, Math.min(13, fh * 0.32))
       drawText(f.value.name, vx + 5, vy + nameSize + 5, nameSize, fontBold, rgb(0.12, 0.16, 0.35))
       drawText(`Signed: ${f.value.timestamp}`, vx + 5, vy + fh - 5, 8, font, rgb(0.3, 0.3, 0.3))
+    }
     }
   }
 

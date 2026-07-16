@@ -101,14 +101,20 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .pagesbar-head button { padding: 6px 10px; font-size: 13px; }
 .pagesgrid { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
 .pagechip {
-  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  border: 2px solid var(--line); border-radius: 8px; padding: 4px; cursor: pointer;
+  flex: 0 0 auto; position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  border: 2px solid var(--line); border-radius: 8px; padding: 4px;
   background: #f7f8fb; opacity: .5; width: 78px;
 }
 .pagechip.on { opacity: 1; border-color: var(--blue-2); background: #fff; }
+.pagechip-body { display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; }
 .pagechip img { width: 66px; height: 90px; object-fit: cover; object-position: top; border: 1px solid var(--line); background: #fff; }
 .pagechip span { font-size: 11px; color: #556; }
 .pagechip input { margin: 0; }
+.draghandle {
+  position: absolute; top: 2px; left: 4px; z-index: 2; font-size: 14px; line-height: 1;
+  color: #8892a6; cursor: grab; touch-action: none; user-select: none; padding: 2px 3px;
+}
+.draghandle:active { cursor: grabbing; }
 
 /* ---------- stage ---------- */
 .stage { flex: 1; display: flex; overflow: hidden; }

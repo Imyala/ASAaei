@@ -65,6 +65,7 @@ export default function App() {
   const [docTitle, setDocTitle] = useState('')
   const [appliedTemplate, setAppliedTemplate] = useState('') // name of an auto-applied layout
   const [selectedPages, setSelectedPages] = useState(new Set()) // page indices to fill
+  const [pageOrder, setPageOrder] = useState([]) // original page indices in display order
   const [showPages, setShowPages] = useState(false)
   const [manualPages, setManualPages] = useState(new Set()) // pages where status cells are typed, not tapped
   const [profile, setProfileState] = useState(getProfile())
@@ -104,17 +105,15 @@ export default function App() {
     if (opts.fields !== undefined) setFields(opts.fields)
     if (opts.mode) setMode(opts.mode)
     if (opts.resetLock) setLocked(false)
-    // Which pages the tech works on. Prefer an explicit set (from a template),
-    // else the pages that actually have fields, else all pages.
+    // Pages start in natural order, ALL selected by default (a fresh document
+    // is ready to fill end-to-end). A saved template may still pin a subset.
     const total = imgs.length
-    let sel
-    if (opts.pages && opts.pages.length) {
-      sel = opts.pages.filter((p) => p >= 0 && p < total)
-    } else {
-      const withFields = [...new Set((opts.fields || []).map((f) => f.page))].filter((p) => p >= 0 && p < total)
-      sel = withFields.length ? withFields : imgs.map((_, i) => i)
-    }
-    setSelectedPages(new Set(sel.length ? sel : imgs.map((_, i) => i)))
+    const allIdx = imgs.map((_, i) => i)
+    setPageOrder(allIdx)
+    const sel = (opts.pages && opts.pages.length)
+      ? opts.pages.filter((p) => p >= 0 && p < total)
+      : allIdx
+    setSelectedPages(new Set(sel.length ? sel : allIdx))
     setShowPages(false)
     setManualPages(new Set())
     setSelectedId(null)
@@ -373,9 +372,14 @@ export default function App() {
   }
   const download = async () => {
     if (!pdfBytes) return
+    const order = orderedSelection()
+    if (!order.length) { alert('Select at least one page to download.'); return }
+    // Pass the page order only when it changes what comes out (a subset or a
+    // reorder); otherwise bake the whole document untouched.
+    const isNatural = order.length === pages.length && order.every((p, i) => p === i)
     setBusy('Building PDF…')
     try {
-      const out = await bakePdf(pdfBytes, fields)
+      const out = await bakePdf(pdfBytes, fields, isNatural ? null : order)
       const blob = new Blob([out], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -386,7 +390,7 @@ export default function App() {
   }
 
   const goHome = () => {
-    setScreen('home'); setPages([]); setFields([]); setNeedSource(false)
+    setScreen('home'); setPages([]); setFields([]); setPageOrder([]); setNeedSource(false)
     setAppliedTemplate(''); setDocKey(''); setDocTitle(''); setShowPages(false)
     setWoResult(null); setWoNotice(''); refreshTemplates()
   }
@@ -396,6 +400,33 @@ export default function App() {
     next.has(i) ? next.delete(i) : next.add(i)
     return next
   })
+  // Selected pages in display order — the exact set/order to export.
+  const orderedSelection = () => pageOrder.filter((i) => selectedPages.has(i))
+
+  // Drag a page chip to reorder. Pointer-based so it works on touch (iPad) too;
+  // we hit-test with elementFromPoint (no pointer capture) so entering another
+  // chip mid-drag moves the dragged page to that slot.
+  const dragPos = useRef(null)
+  useEffect(() => {
+    const move = (e) => {
+      if (dragPos.current == null) return
+      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-pagepos]')
+      if (!el) return
+      const over = Number(el.dataset.pagepos)
+      if (Number.isNaN(over) || over === dragPos.current) return
+      setPageOrder((ord) => {
+        const next = [...ord]
+        const [moved] = next.splice(dragPos.current, 1)
+        next.splice(over, 0, moved)
+        dragPos.current = over
+        return next
+      })
+    }
+    const up = () => (dragPos.current = null)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+  }, [])
   const togglePageManual = (i) => setManualPages((prev) => {
     const next = new Set(prev)
     next.has(i) ? next.delete(i) : next.add(i)
@@ -590,28 +621,36 @@ export default function App() {
       {showPages && (
         <div className="pagesbar">
           <div className="pagesbar-head">
-            <b>Pages to fill</b>
-            <span className="muted">{selectedPages.size} of {pages.length} selected — untick the reading pages</span>
+            <b>Pages to download</b>
+            <span className="muted">{selectedPages.size} of {pages.length} selected — untick reading pages, drag ⠿ to reorder</span>
             <span className="spacer" />
             <button onClick={() => setSelectedPages(new Set(pages.map((_, i) => i)))}>All</button>
             <button onClick={() => { const wf = pagesWithFields(); setSelectedPages(wf.size ? wf : new Set([0])) }}>Only pages with fields</button>
             <button className="primary" onClick={() => setShowPages(false)}>Done</button>
           </div>
           <div className="pagesgrid">
-            {pages.map((pg, i) => (
-              <label key={i} className={'pagechip' + (selectedPages.has(i) ? ' on' : '')}>
-                <input type="checkbox" checked={selectedPages.has(i)} onChange={() => togglePage(i)} />
-                <img src={pg.dataUrl} alt="" draggable={false} />
-                <span>{i + 1}{fields.some((f) => f.page === i) ? ' •' : ''}</span>
-              </label>
-            ))}
+            {pageOrder.map((i, pos) => {
+              const pg = pages[i]
+              if (!pg) return null
+              return (
+                <div key={i} data-pagepos={pos} className={'pagechip' + (selectedPages.has(i) ? ' on' : '')}>
+                  <span className="draghandle" title="Drag to reorder"
+                    onPointerDown={(e) => { dragPos.current = pos; e.preventDefault() }}>⠿</span>
+                  <label className="pagechip-body">
+                    <input type="checkbox" checked={selectedPages.has(i)} onChange={() => togglePage(i)} />
+                    <img src={pg.dataUrl} alt="" draggable={false} />
+                    <span>{i + 1}{fields.some((f) => f.page === i) ? ' •' : ''}</span>
+                  </label>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
 
       <div className="stage">
         <div className="pagescroll">
-          {pages.map((pg, i) => (selectedPages.has(i) ? (
+          {orderedSelection().map((i) => { const pg = pages[i]; return pg ? (
             <div key={i} className="pagewrap">
               <div className="page" data-page={i} onClick={(e) => onPageClick(e, i)}
                 style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}>
@@ -631,7 +670,7 @@ export default function App() {
                 ))}
               </div>
             </div>
-          ) : null))}
+          ) : null })}
         </div>
 
         {mode === 'design' && selected && !locked && (
