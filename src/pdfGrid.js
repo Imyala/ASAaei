@@ -35,7 +35,46 @@ export function buildCells(hlines, vlines, rects, pw, ph) {
       if (hAt(y1, x1, x2) && hAt(y2, x1, x2)) push({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 })
     }
   }
-  return cells
+  return dedupeCells(cells)
+}
+
+// Overlap area of two axis-aligned rectangles.
+function rectOverlap(a, b) {
+  const x = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+  const y = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+  return x > 0 && y > 0 ? x * y : 0
+}
+
+// Remove cells that would put two input boxes inside one visual box:
+//   1. Near-duplicates — an explicit rectangle and the same box reconstructed
+//      from its four edges land a couple of pixels apart, so the integer-keyed
+//      `seen` set keeps both. Collapse any pair that mostly overlaps and is
+//      close in size, keeping the smaller (tighter to the printed box).
+//   2. Container frames — an outer section border (or the whole table frame)
+//      that encloses two or more smaller cells is not an input; its children
+//      are. Dropping it stops one giant field covering a block of cells.
+export function dedupeCells(cells) {
+  const area = (c) => c.w * c.h
+  const bySize = [...cells].sort((a, b) => area(a) - area(b)) // smallest first
+  const kept = []
+  for (const c of bySize) {
+    const dup = kept.some((k) => {
+      const ov = rectOverlap(c, k)
+      if (!ov) return false
+      const lo = Math.min(area(c), area(k)), hi = Math.max(area(c), area(k))
+      return ov >= 0.7 * lo && lo >= 0.6 * hi
+    })
+    if (!dup) kept.push(c)
+  }
+  return kept.filter((c) => {
+    let inside = 0
+    for (const o of kept) {
+      if (o === c || area(o) > area(c) * 0.7) continue
+      const ocx = o.x + o.w / 2, ocy = o.y + o.h / 2
+      if (ocx > c.x && ocx < c.x + c.w && ocy > c.y && ocy < c.y + c.h && ++inside >= 2) return false
+    }
+    return true
+  })
 }
 
 // True when a text token's box genuinely overlaps the cell's interior, in BOTH
@@ -59,6 +98,16 @@ export function cellHasText(c, texts) {
     const hOv = Math.min(t.xr, cx1) - Math.max(t.x, c.x)
     const vOv = Math.min(tBot, cy1) - Math.max(tTop, c.y)
     if (hOv > needX && vOv > needY) return true
+    // Sparse pre-printed text — the grading numbers "1 2 3 4 5" in the condition-
+    // monitoring legend, a single shaded header word — covers only a sliver of a
+    // wide or tall cell, so the overlap test above misses it and a field lands on
+    // top, hiding the printout. Also count the cell occupied when a token's centre
+    // point sits inside its interior (a left-hand row label, whose centre is off
+    // to the left, still can't trip this).
+    if (vOv > 1) {
+      const tcx = (t.x + t.xr) / 2, tcy = (tTop + tBot) / 2
+      if (tcx > c.x + 1 && tcx < cx1 - 1 && tcy > c.y && tcy < cy1) return true
+    }
   }
   return false
 }

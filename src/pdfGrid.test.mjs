@@ -1,5 +1,5 @@
 // Node test for the pure grid logic (no pdfjs). Run: node src/pdfGrid.test.mjs
-import { buildCells, cellsToFields, cellHasText } from './pdfGrid.js'
+import { buildCells, cellsToFields, cellHasText, dedupeCells } from './pdfGrid.js'
 
 let pass = 0, fail = 0
 const ok = (cond, msg) => { if (cond) { pass++ } else { fail++; console.error('  ✗ ' + msg) } }
@@ -25,6 +25,30 @@ console.log('cellHasText — occupancy')
   ok(!cellHasText(cell, [T('Check unit', 20, 104, 114)]), 'left row-label grazing edge does not occupy cell')
   // truly empty
   ok(!cellHasText(cell, []), 'empty cell is empty')
+  // sparse pre-printed legend text ("1 2 3 4 5") in a wide/tall cell — each glyph
+  // is narrow so the overlap test alone misses it, but a field must NOT cover it
+  const grade = { x: 100, y: 100, w: 120, h: 60 } // tall grading box
+  ok(cellHasText(grade, [T('1', 108, 114, 116)]), 'a single small digit occupies a wide grading box')
+  ok(cellHasText(grade, [T('1', 108, 114, 116), T('2', 124, 130, 116)]), 'spaced grading digits occupy the box')
+}
+
+console.log('dedupeCells — one field per visual box')
+{
+  // 1) an explicit rectangle and the same box reconstructed from its edges land a
+  //    few px apart → must collapse to ONE cell.
+  const a = { x: 100, y: 100, w: 90, h: 22 }
+  const b = { x: 102, y: 101, w: 88, h: 21 }
+  ok(dedupeCells([a, b]).length === 1, `near-duplicate cells collapse to one (got ${dedupeCells([a, b]).length})`)
+
+  // 2) an outer frame enclosing two inner cells is dropped (its children remain).
+  const frame = { x: 40, y: 40, w: 300, h: 60 }
+  const c1 = { x: 50, y: 50, w: 120, h: 40 }
+  const c2 = { x: 200, y: 50, w: 120, h: 40 }
+  const kept = dedupeCells([frame, c1, c2])
+  ok(!kept.includes(frame) && kept.length === 2, `container frame dropped, inner cells kept (got ${kept.length})`)
+
+  // 3) two genuinely separate adjacent cells are both kept.
+  ok(dedupeCells([{ x: 0, y: 0, w: 50, h: 20 }, { x: 60, y: 0, w: 50, h: 20 }]).length === 2, 'separate cells both kept')
 }
 
 console.log('cellsToFields — the three reported symptoms')
