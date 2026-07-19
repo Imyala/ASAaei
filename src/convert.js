@@ -108,7 +108,11 @@ export async function docxToPdf(arrayBuffer) {
 
   const holder = document.createElement('div')
   Object.assign(holder.style, {
-    position: 'fixed', left: '-10000px', top: '0',
+    // Must be within the viewport so html2canvas can capture it.
+    // z-index: -9999 keeps it behind the app UI; pointer-events: none
+    // prevents accidental interaction during the async conversion.
+    position: 'fixed', left: '0', top: '0',
+    zIndex: '-9999', pointerEvents: 'none',
     width: A4_W_PX + 'px', padding: '56px', boxSizing: 'border-box',
     background: '#ffffff', color: '#000',
     font: '14px system-ui, -apple-system, "Segoe UI", sans-serif', lineHeight: '1.5',
