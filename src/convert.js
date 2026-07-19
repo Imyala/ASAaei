@@ -121,30 +121,47 @@ export async function docxToPdf(arrayBuffer) {
   document.body.appendChild(holder)
 
   try {
+    // Wait for webfonts to finish loading so text is present when we rasterise
+    // (a first-paint capture can otherwise catch invisible/unstyled text).
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready } catch { /* fonts API best-effort */ }
+    }
+
     // Measure fillable cells before rasterising (needs a live layout).
     const autoFields = detectTableFields(holder)
 
-    const canvas = await html2canvas(holder, {
-      scale: 2, backgroundColor: '#ffffff', windowWidth: A4_W_PX, useCORS: true,
-    })
-    const pxPerPage = A4_H_PX * (canvas.width / A4_W_PX) // page height in canvas px
-    const pageCount = Math.max(1, Math.ceil(canvas.height / pxPerPage))
+    const fullHeight = Math.max(holder.scrollHeight, A4_H_PX)
+    const pageCount = Math.max(1, Math.ceil(fullHeight / A4_H_PX))
+    const scale = 2
 
     const pdfDoc = await PDFDocument.create()
     for (let i = 0; i < pageCount; i++) {
-      const sliceH = Math.min(pxPerPage, canvas.height - i * pxPerPage)
-      const slice = document.createElement('canvas')
-      slice.width = canvas.width
-      slice.height = Math.round(sliceH)
-      const ctx = slice.getContext('2d')
-      ctx.fillStyle = '#fff'
-      ctx.fillRect(0, 0, slice.width, slice.height)
-      ctx.drawImage(canvas, 0, i * pxPerPage, canvas.width, sliceH, 0, 0, canvas.width, sliceH)
+      // Rasterise ONE page at a time. Rendering the whole document into a
+      // single html2canvas canvas overflows the browser's maximum canvas
+      // size — roughly 16384px per side on desktop, and a ~16.7M-pixel *area*
+      // cap on mobile Safari/iOS. When that limit is crossed the canvas comes
+      // back completely blank, which is why every page was losing its content.
+      // Cropping page-by-page (via the width/height/x/y options) keeps each
+      // canvas down to a single A4 page — well under every browser limit — so
+      // the text is preserved regardless of how long the document is.
+      const pageCanvas = await html2canvas(holder, {
+        scale,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        width: A4_W_PX,
+        height: A4_H_PX,
+        x: 0,
+        y: i * A4_H_PX,
+        windowWidth: A4_W_PX,
+        windowHeight: fullHeight,
+        scrollX: 0,
+        scrollY: 0,
+      })
 
-      const png = await pdfDoc.embedPng(slice.toDataURL('image/png'))
+      const png = await pdfDoc.embedPng(pageCanvas.toDataURL('image/png'))
       const page = pdfDoc.addPage([A4_W_PT, A4_H_PT])
-      const drawH = (slice.height / slice.width) * A4_W_PT
-      page.drawImage(png, { x: 0, y: A4_H_PT - drawH, width: A4_W_PT, height: Math.min(drawH, A4_H_PT) })
+      // The page canvas matches A4's aspect ratio, so it fills the page 1:1.
+      page.drawImage(png, { x: 0, y: 0, width: A4_W_PT, height: A4_H_PT })
     }
     // Drop any field whose page fell outside the produced range (safety).
     const fields = autoFields.filter((f) => f.page >= 0 && f.page < pageCount)
