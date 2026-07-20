@@ -6,8 +6,8 @@ import {
   listTemplates, loadTemplate, saveTemplate, deleteTemplate,
   cacheDoc, getCachedDoc, exportTemplate, importTemplateJson, findTemplateByDocKey,
 } from './store.js'
-import { searchWorkOrder, searchDocumentCentre } from './sap.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
+import DocEditor from './DocEditor.jsx'
 
 // Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
 // running version is identifiable when diagnosing stale caches.
@@ -48,7 +48,8 @@ const instantiate = (fields) =>
   fields.map((f) => ({ ...f, id: nextId(), value: f.type === 'signature' ? null : '' }))
 
 export default function App() {
-  const [screen, setScreen] = useState('home') // 'home' | 'editor'
+  const [screen, setScreen] = useState('home') // 'home' | 'editor' | 'edit'
+  const [editorInit, setEditorInit] = useState(null) // { html, name } for the doc editor
   const [templates, setTemplates] = useState([])
   const [online, setOnline] = useState(navigator.onLine)
 
@@ -77,12 +78,6 @@ export default function App() {
     const p = { ...profile, ...patch }
     setProfileState(p); setProfile(p)
   }
-
-  // work-order (SAP) search
-  const [woInput, setWoInput] = useState('')
-  const [woBusy, setWoBusy] = useState(false)
-  const [woResult, setWoResult] = useState(null)
-  const [woNotice, setWoNotice] = useState('') // '' | 'not-configured' | error text
 
   const fileRef = useRef(null)
   const importRef = useRef(null)
@@ -129,7 +124,7 @@ export default function App() {
   // from this document every time, so a re-issued/edited form just works with no
   // setup. A saved layout is only a silent fallback for a form the detector
   // can't read — it never overrides good detection (which would go stale when
-  // the document changes). Used by "Open form" and the work-order flow.
+  // the document changes). Used by the "Fill out a document" flow.
   const openDocument = useCallback(async (bytes, name, meta = {}) => {
     const { autoFields = [], docKey: dk = '', docTitle: dt = '' } = meta
     setDocKey(dk); setDocTitle(dt)
@@ -223,54 +218,12 @@ export default function App() {
     } finally { setBusy('') }
   }
 
-  // ---- work-order (SAP) search -------------------------------------------
-  // Look up the work order in SAP, then automatically search the Document
-  // Centre for its form and open it (already prefilled). Falls back to showing
-  // details / matches if the form can't be auto-opened.
-  const searchWO = async () => {
-    setWoNotice(''); setWoResult(null)
-    setWoBusy(true)
-    try {
-      const wo = await searchWorkOrder(woInput)
-      setWoResult(wo)
-      if (wo.documentQuery) {
-        const docs = await searchDocumentCentre(wo.documentQuery)
-        if (docs.length) {
-          setWoResult({ ...wo, documents: docs })
-          await openWorkOrderDoc({ number: wo.number, documentUrl: docs[0].url, documentName: docs[0].fileName })
-          return
-        }
-        setWoNotice(`No matching form found in the Document Centre for WO ${wo.number}.`)
-      } else {
-        setWoNotice(`WO ${wo.number} has no linked form to search for.`)
-      }
-    } catch (err) {
-      setWoNotice(err.code === 'NOT_CONFIGURED' ? 'not-configured' : (err.message || 'Search failed.'))
-    } finally {
-      setWoBusy(false)
-    }
-  }
-
-  // Pull the document linked to a work order and open it (auto-detecting fields,
-  // exactly like a manually opened file). Runs once the SAP middleware exists.
-  const openWorkOrderDoc = async (wo) => {
-    if (!wo?.documentUrl) return
-    setBusy('Loading work order document…')
-    try {
-      const resp = await fetch(wo.documentUrl, { credentials: 'include' })
-      if (!resp.ok) throw new Error(`Could not fetch the document (${resp.status}).`)
-      const blob = await resp.blob()
-      const name = wo.documentName || `WO-${wo.number}.pdf`
-      const file = new File([blob], name, { type: blob.type })
-      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file, {
-        onProgress: (done, total) => setBusy(`Converting Word document… (page ${Math.min(done + 1, total)} of ${total})`),
-      })
-      await openDocument(bytes, name, { autoFields, docKey: dk, docTitle: dt })
-    } catch (err) {
-      alert(err.message || 'Could not open the work order document.')
-    } finally {
-      setBusy('')
-    }
+  // ---- document editor ----------------------------------------------------
+  // Open the Word/Adobe-style editor. Starts blank; the editor itself can open
+  // a .docx or a previously-saved .html to edit.
+  const openEditor = () => {
+    setEditorInit({ html: '', name: 'document' })
+    setScreen('edit')
   }
 
   const onImport = async (e) => {
@@ -400,7 +353,7 @@ export default function App() {
   const goHome = () => {
     setScreen('home'); setPages([]); setFields([]); setPageOrder([]); setNeedSource(false)
     setAppliedTemplate(''); setDocKey(''); setDocTitle(''); setShowPages(false)
-    setWoResult(null); setWoNotice(''); refreshTemplates()
+    setEditorInit(null); refreshTemplates()
   }
 
   const togglePage = (i) => setSelectedPages((prev) => {
@@ -442,6 +395,17 @@ export default function App() {
   })
   const pagesWithFields = () => new Set(fields.map((f) => f.page))
 
+  // ================= DOCUMENT EDITOR =================
+  if (screen === 'edit') {
+    return (
+      <DocEditor
+        initialHtml={editorInit?.html || ''}
+        initialName={editorInit?.name || 'document'}
+        onExit={goHome}
+      />
+    )
+  }
+
   // ================= HOME SCREEN =================
   if (screen === 'home') {
     return (
@@ -452,49 +416,21 @@ export default function App() {
           <h1>ASAaei</h1>
           <span className={'net ' + (online ? 'up' : 'down')}>{online ? '● Online' : '○ Offline'}</span>
         </header>
-        <p className="tag">Document fill, sign &amp; lock — works offline on iPad, tablet &amp; desktop.</p>
+        <p className="tag">Fill out and edit documents — works offline on iPad, tablet &amp; desktop.</p>
 
-        <section className="wo">
-          <label className="wolabel" htmlFor="wo">Find a work order</label>
-          <div className="worow">
-            <input id="wo" className="woinput" inputMode="numeric" placeholder="Work order number (e.g. 2112345)"
-              value={woInput} onChange={(e) => setWoInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') searchWO() }} />
-            <button className="primary" onClick={searchWO} disabled={woBusy}>
-              {woBusy ? 'Searching…' : '🔍 Search SAP'}
-            </button>
-          </div>
-          {woNotice === 'not-configured' && (
-            <div className="wonotice">
-              <b>SAP search isn’t connected yet.</b> When it’s on, you enter a work order and the
-              app looks it up in SAP, automatically finds the matching form in the Document Centre,
-              and opens it prefilled. It needs the small in-network service in <code>server/</code>
-              pointed at SAP + the Document Centre — see <code>docs/ARCHITECTURE.md</code> §8.
-            </div>
-          )}
-          {woNotice && woNotice !== 'not-configured' && <div className="wonotice err">{woNotice}</div>}
-          {woResult && (
-            <div className="wocard">
-              <div className="tplmeta">
-                <b>WO {woResult.number}</b>
-                <small>{[woResult.description, woResult.equipment, woResult.status].filter(Boolean).join(' · ')}</small>
-              </div>
-              {woResult.documents?.length ? (
-                <div className="woactions">
-                  {woResult.documents.slice(0, 3).map((d, i) => (
-                    <button key={i} className={i === 0 ? 'primary' : ''}
-                      onClick={() => openWorkOrderDoc({ number: woResult.number, documentUrl: d.url, documentName: d.fileName })}>
-                      {i === 0 ? 'Open ' : ''}{d.documentNumber || d.title || d.fileName}
-                    </button>
-                  ))}
-                </div>
-              ) : <small className="empty">No form linked to this work order.</small>}
-            </div>
-          )}
+        <section className="actions primary-actions">
+          <button className="big primary" onClick={() => pickFile('new')}>
+            📝 Fill out a document
+            <small>Open a PDF or Word form — fillable boxes are detected automatically, ready to tick, type and sign. For technicians on the job.</small>
+          </button>
+          <button className="big primary" onClick={openEditor}>
+            ✏️ Edit a document
+            <small>Open or create a document and change its text, formatting and layout — like Word. For engineers updating forms.</small>
+          </button>
         </section>
 
         <section className="profile">
-          <label className="wolabel">Your details <span className="muted">— auto-filled into every form (name, SAP ID, date)</span></label>
+          <label className="wolabel">Your details <span className="muted">— auto-filled into forms you fill out (name, SAP ID, date)</span></label>
           <div className="worow">
             <input className="woinput" placeholder="Your name" value={profile.name || ''}
               onChange={(e) => updateProfile({ name: e.target.value })} />
@@ -503,19 +439,16 @@ export default function App() {
           </div>
         </section>
 
-        <section className="actions">
-          <button className="big primary" onClick={() => pickFile('new')}>
-            ＋ Open form<small>Open any PDF/Word doc — fields are detected automatically, ready to fill</small>
-          </button>
+        <section className="actions secondary-actions">
           <button className="big" onClick={startBlank}>
-            ▢ Blank page<small>Experiment on an empty A4 sheet</small>
+            ▢ Blank fillable page<small>Place fields on an empty A4 sheet</small>
           </button>
           <button className="big" onClick={() => importRef.current?.click()}>
-            ⇩ Import template<small>Load a template shared as a file</small>
+            ⇩ Import fill layout<small>Load a saved field layout shared as a file</small>
           </button>
         </section>
 
-        <h2>Saved layouts <span className="muted">— optional</span></h2>
+        <h2>Saved fill layouts <span className="muted">— optional</span></h2>
         {busy && <div className="busy">{busy}</div>}
         {templates.length === 0 ? (
           <p className="empty">You don’t need any of these. Every form you open is filled in
@@ -539,10 +472,8 @@ export default function App() {
             ))}
           </ul>
         )}
-        <p className="hint">Source documents are downloaded fresh each time from the document
-          centre (updated often). The last copy is kept for offline use.
-          SharePoint/“Horizons”, N: drive save and SAP close-out arrive in later phases —
-          see <code>docs/ARCHITECTURE.md</code>.</p>
+        <p className="hint">Open documents straight from your device and save the finished file
+          wherever you like. Everything runs in your browser — nothing is uploaded.</p>
         <p className="hint" style={{ opacity: 0.6, fontSize: 12 }}>Build {BUILD_ID}</p>
       </div>
     )
@@ -557,20 +488,19 @@ export default function App() {
           <h1>{fileName}</h1>
           <button onClick={goHome}>← Home</button>
         </header>
-        <p className="tag">Load the current document to fill it in.</p>
+        <p className="tag">Open the document to apply this layout and fill it in.</p>
         <section className="actions">
           <button className="big primary" onClick={() => pickFile('apply', activeTemplateId)}>
-            ⇩ Load latest document<small>Get the up-to-date file from the document centre</small>
+            ⇩ Open document<small>Choose the PDF or Word file to fill in with this layout</small>
           </button>
           {cachedDoc && (
             <button className="big" onClick={useOfflineCopy}>
-              ▣ Use offline copy<small>Saved {new Date(cachedDoc.savedAt).toLocaleString()}</small>
+              ▣ Reopen last file<small>Saved {new Date(cachedDoc.savedAt).toLocaleString()}</small>
             </button>
           )}
         </section>
         {busy && <div className="busy">{busy}</div>}
-        <p className="hint">Always load the latest when you have a connection — the offline copy
-          may be out of date.</p>
+        <p className="hint">If the form has changed, open the current file so the layout matches.</p>
       </div>
     )
   }
@@ -611,7 +541,7 @@ export default function App() {
             </button>
           )}
           {mode === 'design' && !locked && <button onClick={saveAsTemplate}>💾 Save as template</button>}
-          <button onClick={() => pickFile('reload', activeTemplateId)}>↻ Reload latest</button>
+          <button onClick={() => pickFile('reload', activeTemplateId)}>↻ Reload file</button>
           {locked && <span className="locked-badge">🔒 Locked</span>}
           {!locked && <button onClick={finalize}>Finalize &amp; lock</button>}
           <button className="primary" onClick={download}>Download PDF</button>

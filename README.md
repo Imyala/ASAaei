@@ -1,14 +1,17 @@
 # ASAaei
 
-App for the **SharePoint → edit/sign document → N: drive → SAP work-order close** workflow.
+A browser-based, **offline-capable (installable PWA)** app for working with documents on any
+device — iPad, tablet, or desktop. It does two things, from one home screen:
 
-This repo currently contains **Phases 1–2**: a browser-based, **offline-capable (installable
-PWA)** tool to open a PDF **or Word doc**, add prefillable fields (text, dropdowns, OK/Fail/N/A
-tick boxes) and signatures, save the layout as a **reusable form template**, then fill, lock,
-and download a finished PDF. It runs on iPad, tablet, and desktop with no server.
+- **📝 Fill out a document** — open a PDF or Word form, get its fillable boxes detected
+  automatically (text, dropdowns, OK/Fail/N/A tap-cells, signatures), fill, sign, lock, and save a
+  finished PDF. *For technicians on the job.*
+- **✏️ Edit a document** — open or create a document and change its **text, formatting and
+  layout**, like Word: headings, bold/italic/underline, colour, alignment, lists, tables and
+  images. Export a print-ready PDF, or a re-editable HTML file. *For engineers updating forms.*
 
-See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design, the build phases,
-and the questions to send IT/Basis for the SharePoint, N: drive, and SAP integrations.
+Everything runs in the browser. Nothing is uploaded to a server, and you save the finished file
+wherever you like.
 
 ## Run it locally
 
@@ -24,48 +27,45 @@ npm run build    # output goes to dist/
 npm run preview  # serve the built version to try on other devices on your network
 ```
 
-## What works today (Phases 1–2)
+## Fill out a document
 
-- Open a **PDF or Word (.docx)** file — Word is converted to PDF in the browser — or start blank.
-- **Design form:** place text fields, dropdowns, OK/Fail/N/A groups, and signature blocks;
-  drag to position; set labels and dropdown options.
-- **Opens ready to fill:** the app recognises a form by its document number (e.g. `AEI 3.4106`)
-  and, if you've saved a layout for it before, **re-applies that layout automatically** and opens
-  in fill mode — so after a one-time setup, that form is always ready. See "Auto-detect" and
-  "Save as template" below.
-- **Auto-detect fields (Word *and* PDF):** when a document is opened, the app pre-places the
-  fields for you and drops you into fill mode. For PDFs it reads the document's **actual ruled
-  boxes** (the drawn table cells) and puts a field precisely inside each empty one — so fields sit
-  neatly in the boxes and none are missed, including grids that have no text to anchor to. It
-  classifies each box (OK/Fail/N/A tap-cell for narrow status columns, text for wider cells,
-  signature next to a "Signature" label) and labels detail cells from the text beside them (so
-  profile autofill works). Word docs are read from their table structure; PDFs with embedded form
-  fields use those directly. (Detection re-runs on every open, so re-issued versions still fill.)
+- Open a **PDF or Word (.docx)** file — Word is converted in the browser — or start from a blank
+  fillable page.
+- **Auto-detect fields (Word *and* PDF):** the app pre-places the fields and drops you into fill
+  mode. For PDFs it reads the document's **actual ruled boxes** and puts a field inside each empty
+  one; Word docs are read from their table structure; PDFs with embedded form fields use those
+  directly. It classifies each box (OK/Fail/N/A tap-cell for narrow status columns, text for wider
+  cells, signature next to a "Signature" label). Detection re-runs on every open, so re-issued
+  versions still fill.
+- **Design form:** place text fields, dropdowns, OK/Fail/N/A groups, and signature blocks; drag to
+  position; set labels and dropdown options.
 - **Tap OK / Fail / N/A:** status cells are a single tap-cycle — blank → **OK** → **Fail** →
   **N/A** → blank — so a whole column is a few taps, no dropdowns.
 - **Profile autofill:** set your name + SAP ID once on the home screen; every form opens with your
   name, SAP ID and today's date already filled in.
-- **Page picker:** long procedures have many reading pages before the fillable ones. The **Pages**
-  button lets you keep only the pages you fill; the app defaults to the pages that have fields.
-  Your selection is saved with the template.
-- **Work-order search (SAP + Document Centre):** enter a work order on the home screen and the
-  app looks it up in SAP, automatically finds the matching form in the Document Centre, and opens
-  it prefilled. This needs the in-network service in [`server/`](server/README.md); until it's
-  configured the search box is a clearly-labelled preview.
-- **Save as template:** store a form's field layout and reuse it — technicians pick a template
-  from the home screen and just fill the latest document. Templates export/import as files.
-- **Fill & sign:** fill in the fields on any device; sign with name + date/time (Outlook-style).
+- **Page picker:** keep only the pages you fill; the app defaults to the pages that have fields.
+- **Save as a fill layout:** store a form's field layout and reuse it — pick it from the home
+  screen and just fill the current document. Layouts export/import as files, and the app can
+  re-apply a saved layout automatically when it recognises the form's document number.
+- **Fill & sign** on any device; sign with name + date/time (Outlook-style).
 - **Finalize & lock:** locks the fields so the document can no longer be edited — only further
   signatures may be added.
-- **Download PDF:** exports a flattened (non-editable) PDF.
-- **Offline / installable:** "Add to Home Screen" and run with no connection after the first
-  load. The latest document is fetched when online and cached for offline use. *(Offline mode
-  needs the app served over http(s) — an internal host is fine; it does not work from `file://`.)*
+- **Save PDF:** exports a flattened (non-editable) PDF.
 
-## Not yet built (later phases — need IT access)
+## Edit a document
 
-- Pull source documents from SharePoint / "Horizons" (Phase 3).
-- Automatic save to the N: drive (Phase 4).
-- Close SAP IW32/IW42 work orders (Phase 5).
+- Start blank, or **Open** a Word (`.docx`) or a previously-saved HTML file.
+- Rich formatting toolbar: paragraph styles and headings, bold / italic / underline /
+  strikethrough, text colour and highlight, alignment, bulleted/numbered lists, indent, tables,
+  images, links, and undo/redo.
+- **What you see is what you get:** the editing page uses the same stylesheet as the export, so
+  the PDF matches the screen.
+- **Export PDF** for a print-ready copy, or **Save (HTML)** for a self-contained file that
+  re-opens in the editor for further editing.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details and the IT/Basis access questions.
+## Offline / installable
+
+"Add to Home Screen" and run with no connection after the first load. *(Offline mode needs the app
+served over http(s) — an internal host is fine; it does not work from a bare `file://` copy.)*
+
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for how the document engine works.

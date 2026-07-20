@@ -97,26 +97,36 @@ function clampPct(v) {
   return Math.min(Math.max(v, 0), 1)
 }
 
-// Convert a .docx to PDF entirely in the browser (no server, works offline).
-// mammoth turns the document into HTML; we lay it out at A4 width, detect the
-// fillable table cells, rasterise with html2canvas, slice into pages, and
-// assemble a PDF with pdf-lib. The result is treated exactly like an uploaded
-// PDF from then on, and the detected fields ride along as `autoFields`.
-export async function docxToPdf(arrayBuffer, { onProgress } = {}) {
-  // Ask mammoth to keep the formatting it usually drops: underline and
-  // strikethrough survive (they read as emphasis on a form), and empty
-  // paragraphs are preserved so the vertical spacing tracks the original
-  // document instead of collapsing. Bold/italic/headings/lists/tables/images
-  // come through with the default style map.
-  const { value: html } = await mammoth.convertToHtml(
+// Convert a .docx to clean, Word-like HTML with mammoth. Underline and
+// strikethrough are kept (mammoth drops them by default) and empty paragraphs
+// are preserved so vertical spacing tracks the original; bold/italic/headings/
+// lists/tables/images come through with the default style map. This HTML is
+// used both for the PDF fill pipeline and, directly, by the document editor.
+export async function docxToHtml(arrayBuffer) {
+  const { value } = await mammoth.convertToHtml(
     { arrayBuffer },
-    {
-      styleMap: ['u => u', 'strike => s'],
-      ignoreEmptyParagraphs: false,
-    },
+    { styleMap: ['u => u', 'strike => s'], ignoreEmptyParagraphs: false },
   )
-  const identity = extractIdentity(htmlToText(html))
+  return value || ''
+}
 
+// Convert a .docx to PDF entirely in the browser (no server, works offline).
+// The result is treated exactly like an uploaded PDF from then on, and the
+// detected fields ride along as `autoFields`.
+export async function docxToPdf(arrayBuffer, { onProgress } = {}) {
+  const html = await docxToHtml(arrayBuffer)
+  const identity = extractIdentity(htmlToText(html))
+  const { bytes, autoFields } = await htmlToPdf(html, { onProgress, detectFields: true })
+  return { bytes, autoFields, ...identity }
+}
+
+// Lay an HTML string out at A4 width, rasterise with html2canvas, slice into
+// A4 pages, and assemble a PDF with pdf-lib. Shared by the Word→PDF fill path
+// (`detectFields: true` measures the fillable table cells off the live layout
+// and returns them as page-relative `autoFields`) and the document editor's
+// "export to PDF" (`detectFields: false`). Uses the same DOCX_CSS as the
+// on-screen editor, so the exported PDF matches what the user was editing.
+export async function htmlToPdf(html, { onProgress, detectFields = false } = {}) {
   const holder = document.createElement('div')
   holder.className = 'docx-holder'
   Object.assign(holder.style, {
@@ -150,7 +160,7 @@ export async function docxToPdf(arrayBuffer, { onProgress } = {}) {
     await waitForAssets(holder)
 
     // Measure fillable cells before rasterising (needs a live layout).
-    const autoFields = detectTableFields(holder)
+    const autoFields = detectFields ? detectTableFields(holder) : []
 
     const fullHeight = Math.max(holder.scrollHeight, A4_H_PX)
     const pageCount = Math.max(1, Math.ceil(fullHeight / A4_H_PX))
@@ -242,7 +252,7 @@ export async function docxToPdf(arrayBuffer, { onProgress } = {}) {
     if (onProgress) onProgress(pageCount, pageCount)
     // Drop any field whose page fell outside the produced range (safety).
     const fields = autoFields.filter((f) => f.page >= 0 && f.page < pageCount)
-    return { bytes: await pdfDoc.save(), autoFields: fields, ...identity }
+    return { bytes: await pdfDoc.save(), autoFields: fields }
   } finally {
     document.body.removeChild(holder)
   }
@@ -277,9 +287,11 @@ function canvasToJpegBytes(canvas, quality = 0.92) {
   })
 }
 
-// Word-like stylesheet applied to the mammoth HTML before rasterising. Scoped
-// to `.docx-holder` so it only affects the off-screen conversion element.
-const DOCX_CSS = `
+// Word-like stylesheet applied to the HTML before rasterising, and reused by
+// the on-screen document editor so editing is WYSIWYG with the exported PDF.
+// Scoped to `.docx-holder`, the class carried by both the off-screen
+// conversion element and the editor's page surface.
+export const DOCX_CSS = `
 .docx-holder, .docx-holder * { box-sizing: border-box; }
 .docx-holder p { margin: 0 0 8px; }
 .docx-holder h1, .docx-holder h2, .docx-holder h3,

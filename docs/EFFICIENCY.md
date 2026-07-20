@@ -13,8 +13,8 @@ roughly in order of time saved per dollar of effort.
 - **Tap OK / Fail / N/A** tri-state cells (blank → OK → Fail → N/A), no dropdowns.
 - **Profile autofill**: name + SAP ID + today's date filled in automatically on open.
 - **Page picker**: skip the reading pages, fill only the pages that matter.
-- **Work-order search** (with the `server/` middleware): enter a WO → pull the form → open it
-  prefilled.
+- **Document editor**: a Word/Adobe-style editor (text, formatting, layout, tables, images) so
+  engineers can *update* forms, not just fill them — exports PDF or a re-editable HTML file.
 
 ## The version-drift problem (important)
 
@@ -48,7 +48,6 @@ defences, in order:
    for detection).
 7. **Validation & completeness.** Warn on required-but-empty fields before lock/download; flag a
    "Fail" with no remark.
-8. **N: drive / SAP close-out** (Phases 4–5 in ARCHITECTURE.md) via the same middleware.
 
 ## A "lite offline model" — where it helps, where it doesn't
 

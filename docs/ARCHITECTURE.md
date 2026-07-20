@@ -1,186 +1,90 @@
-# ASAaei — Document → N: Drive → SAP Workflow App
+# ASAaei — Document Filler & Editor
 
-**Status:** Design + Phase-1 prototype
-**Audience:** the team building this, plus IT/Basis for the integration questions in §5.
+**Status:** Working app
+**Audience:** the team building and maintaining this.
 
 ---
 
 ## 1. What we are building
 
-A single app that walks a user through one document at a time:
+A single browser app that does two jobs with documents, chosen from the home screen:
 
-1. **PICK** — get the source document from SharePoint ("Horizons").
-2. **EDIT** — open the Word/PDF, fill it in with prefillable fields (text, dropdowns,
-   OK/Fail/N/A tick boxes), and sign it (name + date/time, Outlook-style).
-3. **LOCK & SAVE** — once signed, the document can no longer be edited (only further
-   signatures may be added); the finished **PDF** is written to an **N: drive** folder.
-4. **CLOSE** — collect the SAP fields and close the work order (IW32/IW42, Plant Maintenance).
+1. **Fill out a document** — open a Word/PDF form, fill it in with prefillable fields (text,
+   dropdowns, OK/Fail/N/A tick boxes), sign it (name + date/time, Outlook-style), lock it, and
+   save the finished **PDF**.
+2. **Edit a document** — open or create a document and change its text, formatting and layout
+   (headings, styles, tables, images) — a Word/Adobe-style editor — then export a PDF or a
+   re-editable HTML file.
 
-This replaces today's manual process of hand-drawing text boxes on a PDF.
+Everything runs on the device, in the browser. There is no server and nothing is uploaded; the
+user saves the finished file wherever they choose (device, a synced folder, a share, etc.).
 
 ## 2. Devices it must run on
 
-Windows desktops, touchscreen/laptops, **and iPads/tablets**.
-
-That last one is the deciding constraint. An iPad cannot:
-- run a native Windows program,
-- map or write to an `N:` drive,
-- run SAP GUI.
-
-So the app is a **responsive web app** (runs in any browser), backed by a **server that
-lives inside the company network** and performs the steps a browser/iPad physically cannot.
-
-```
-   DEVICE (any browser)                 SERVER (inside the network)
- ┌────────────────────┐              ┌──────────────────────────────┐
- │ iPad / tablet      │              │ • pull source doc from        │
- │ touchscreen laptop │◄────────────►│   SharePoint / "Horizons"     │
- │ Windows desktop    │   HTTPS      │ • write finished PDF to the   │
- │                    │              │   N: drive (UNC path)         │
- │ pick→fill→sign→send│              │ • close SAP work order        │
- └────────────────────┘              └──────────────────────────────┘
-```
-
-- **Filling & signing** happen on the device — works everywhere.
-- **N: drive save** and **SAP close-out** happen server-side, so the iPad never needs
-  direct access to either.
+Windows desktops, touchscreen/laptops, **and iPads/tablets**. That last one is the deciding
+constraint — an iPad can't run a native program — so the app is a **responsive web app** that runs
+in any browser and installs as a **PWA** ("Add to Home Screen") for offline use.
 
 ## 3. The document engine (the core value)
 
-Everything the user asked for maps onto standard **PDF form + signature** technology:
+### Fill
+
+Everything the fill flow needs maps onto standard **PDF form + signature** technology:
 
 | Requirement                                   | How it is done                                             |
 |-----------------------------------------------|------------------------------------------------------------|
-| Word doc sometimes provided                   | Convert Word → PDF server-side (Phase 2)                   |
-| Prefillable fields, dropdowns, tick boxes     | PDF **AcroForm** fields (text / choice / checkbox)         |
-| OK / Fail / N/A                               | A checkbox/radio group per line item                       |
+| Word doc sometimes provided                   | Convert Word → PDF in the browser (mammoth + html2canvas + pdf-lib) |
+| Prefillable fields, dropdowns, tick boxes     | Field overlays baked onto the PDF on download              |
+| OK / Fail / N/A                               | A single tri-state tap-cell per line item                  |
 | Signature with name + date/time (Outlook-like)| A signature block stamped with signer name + timestamp     |
-| Locked after signing, except more signatures  | The form is **flattened/locked** on signing; only signature fields stay open |
+| Locked after signing, except more signatures  | The fields are **flattened** into the PDF on lock          |
 | Must be saved as PDF                           | Output is always a flattened PDF                           |
 
-**Tamper-proofing note:** the Phase-1 prototype enforces "no longer editable" at the app
-level by flattening the fields. For legally-robust, tamper-*evident* documents we later add
-**cryptographic PDF signatures** (PKI certificate + DocMDP field lock). That is an upgrade,
-not required for the first working version.
+**Auto-detected fields.** When a document is opened, the app pre-places the fields and drops the
+user into fill mode. Word docs are read from their table structure; PDFs are read from their
+**actual ruled boxes** (drawn table cells) or embedded AcroForm fields. Detection re-runs on every
+open, so a re-issued version of a form still fills without any setup.
 
-## 4. Build phases (deliver value before IT unblocks the integrations)
+**Tamper-proofing note:** the app enforces "no longer editable" by flattening the fields on lock.
+For legally-robust, tamper-*evident* documents, **cryptographic PDF signatures** (PKI certificate
++ DocMDP field lock) could be added later. That is an upgrade, not required for normal use.
 
-| Phase | Deliverable                                                        | Needs IT? | Status |
-|-------|--------------------------------------------------------------------|-----------|--------|
-| **1** | Web app: open PDF, place fields, fill, sign+timestamp, lock, download | No     | ✅ Done |
-| **2** | Word→PDF conversion; reusable field templates; offline (installable PWA) | No | ✅ Done |
-| **3** | Pull source documents from SharePoint / Horizons                    | Yes (Q1)  | Planned |
-| **4** | Server writes the finished PDF to the N: drive automatically         | Yes (Q2)  | Planned |
-| **5** | Collect SAP fields and close the IW32/IW42 work order               | Yes (Q3)  | Planned |
+### Edit
 
-### Phase 2 — how it works
+The editor works on HTML — the same clean, Word-like HTML the fill pipeline gets from a `.docx`
+(via mammoth) — in a `contentEditable` surface with a formatting toolbar. The editing page and the
+PDF export share one stylesheet (`DOCX_CSS` in `src/convert.js`), so editing is WYSIWYG with the
+output. Exports:
 
-- **Auto-detected fields (Word docs).** When a `.docx` is opened, the app reads the document's
-  real table structure and pre-places the fields — **OK/Fail/N/A dropdowns** in the status
-  columns (including maintenance frequency columns like 1M/3M/6M/1Y) and **text fields** for
-  Remarks/comments and blank label→value cells — then opens straight in fill mode. Techs don't
-  lay anything out; they just fill. (Auto-detection uses the Word table grid, so it applies to
-  `.docx` sources; PDFs still support manual/template field placement.)
-- **Reusable templates.** You lay out the fields for a form type once ("Pump Inspection
-  Sheet") and **Save as template**. Technicians then pick that template from the home screen and
-  just fill the current document — no rebuilding text boxes each time. Templates are stored in
-  the browser (IndexedDB) and can be **exported/imported as a file** to share across devices
-  (later synced via the Phase-3 server).
-- **Documents are re-downloaded every time.** Because the source documents are updated
-  frequently, the app always loads the *latest* file when you use a template. The last copy is
-  cached so it still works **offline** — with a reminder that the offline copy may be stale.
-- **Word → PDF in the browser.** `.docx` files are converted to PDF client-side (mammoth +
-  html2canvas + pdf-lib) so it works with no server and offline. Fidelity is good for
-  text/checklist forms; complex layouts convert better server-side, which we can add in
-  Phase 3 (headless LibreOffice) once the network server exists.
-- **Offline / installable.** The app is a PWA: "Add to Home Screen" on an iPad and it runs
-  with no connection after the first load. *Note:* a service worker requires the app to be
-  **served over http(s)** (an internal host is fine) — offline mode does not work from a bare
-  `file://` copy.
+- **PDF** — the same html2canvas → pdf-lib rasteriser the fill flow uses, so a long document builds
+  quickly (pages are embedded as JPEG, not PNG) and looks the same as on screen.
+- **HTML** — a self-contained file that bundles the stylesheet and re-opens in the editor for
+  further editing.
 
-**Phases 1–2 are in this repo** (see the app at the project root). It runs in a browser with no
-server and no IT access, so the team can try the fill/sign/lock flow on any device today.
+> **Fidelity note.** Word → HTML conversion (mammoth) keeps text, emphasis, headings, lists,
+> tables and images, and the app restores a Word-like look (ruled table grids, heading sizes,
+> spacing). Very complex Word layouts (exact fonts, multi-column, precise spacing) convert
+> approximately; a fully faithful, round-trippable `.docx` export would need a heavier engine
+> (e.g. server-side LibreOffice) and is a possible future addition.
 
-## 5. Questions for IT / Basis (each unblocks one phase)
+## 4. Code map
 
-1. **SharePoint / "Horizons"** — Is Horizons *SharePoint Online (Microsoft 365)* or an
-   *on-prem SharePoint server*? Can we get an app registration / API permission to read a
-   document library? (Unblocks Phase 3.)
-2. **N: drive** — What is the real UNC path behind `N:` (e.g. `\\fileserver\share\folder`)?
-   Can a service account get write access to the target folder? (Unblocks Phase 4.)
-3. **SAP** — To close IW32/IW42 work orders programmatically, can Basis expose a
-   **BAPI** (`BAPI_ALM_ORDER_MAINTAIN`) or an **OData/SAP Gateway** service? If neither,
-   can we run **SAP GUI Scripting** from a Windows service account? (BAPI/OData is far more
-   reliable than GUI scripting — strongly preferred.) (Unblocks Phase 5.)
+- **Front-end:** React (Vite), open-source libraries only (no license fees):
+  - `pdf-lib` — build/fill/flatten PDFs
+  - `pdf.js` (`pdfjs-dist`) — render PDF pages to images for the fill view
+  - `mammoth` — Word (`.docx`) → HTML
+  - `html2canvas` — rasterise HTML to page images for PDF output
+- **Key modules (`src/`):**
+  - `convert.js` — Word/HTML → PDF, shared `DOCX_CSS`, field auto-detection for Word tables
+  - `DocEditor.jsx` — the document editor (toolbar + contentEditable + PDF/HTML export)
+  - `App.jsx` — home screen (Fill vs Edit), the fill editor, page picker, templates
+  - `bake.js` — draw field values onto the PDF and flatten
+  - `pdfFields.js` / `pdfBoxes.js` / `pdfGrid.js` — PDF field/box detection
+  - `store.js` — IndexedDB storage for saved fill layouts (templates)
+  - `profile.js` — the user's name / SAP ID / today's date autofill
 
-## 6. Recommended stack
+## 5. Offline / installable
 
-- **Front-end:** React (Vite), open-source PDF libraries `pdf-lib` (write/fill/flatten) and
-  `pdf.js` (render). No license fees.
-- **Back-end (Phase 3+):** a small service inside the network. .NET is a good fit if the
-  company is Microsoft-heavy (clean SharePoint + SAP .NET Connector paths); Node also works.
-- **SAP:** prefer BAPI/OData over GUI scripting for reliability.
-
-## 7. Security / sign-off notes
-
-- Company single sign-on (Microsoft Entra ID) for login once the server exists.
-- Every finished document logged (who, what work order, when, N: path).
-- Signed PDFs are immutable; re-opening a signed doc allows adding signatures only.
-
-## 8. Work-order search — the SAP-first entry point
-
-The target flow makes the **work order the way in**: a tech types a work order number on the
-home screen, taps **Search**, and the app pulls the SAP order details *and* the linked document,
-ready to fill. This is the natural front door to Phases 3 + 5.
-
-**Why it needs a server.** A browser — especially an iPad — cannot call SAP directly (no SAP
-GUI; SAP Gateway/BAPI sit inside the network behind auth a public page can't reach, and CORS
-would block it). So the search box calls a thin **middleware** endpoint inside the network that
-does the SAP lookup server-side. A runnable reference implementation of this service ships in
-[`server/`](../server/README.md) (Node/Express) with a **mock mode** for demos and real
-SAP-OData + SharePoint-search code paths marked `TODO(IT)` where credentials/entity paths plug in.
-
-```
- Home screen                 Middleware (in-network)            Systems of record
- ┌───────────────┐  HTTPS   ┌────────────────────────┐         ┌──────────────────┐
- │ WO: 2112345   │─────────►│ GET /workorders/2112345│────────►│ SAP  (BAPI/OData) │  order header,
- │  [ Search ]   │          │  → SAP order details    │         │  IW32/IW42        │  status, equipment
- │               │◄─────────│  → link to the document │◄────────│ SharePoint / N:   │  the actual doc
- └───────────────┘   JSON   └────────────────────────┘         └──────────────────┘
-```
-
-**Contract (already coded against — see `src/sap.js` and `server/`).** Two steps:
-
-1. `GET {API}/workorders/{number}` → the order plus a `documentQuery`:
-   ```json
-   { "number":"2112345", "description":"Cooling tower inspection", "status":"REL",
-     "plant":"…", "equipment":"…",
-     "documentQuery": { "documentNumber":"AEI-3.3007", "keywords":"Cooling Towers …", "systems":"Mechanical" } }
-   ```
-2. `GET {API}/documents/search?documentNumber=&keywords=&systems=&title=` → ranked matches:
-   ```json
-   { "results": [ { "documentNumber":"AEI-3.3007", "title":"…", "fileName":"AppendixB.pdf", "url":"…", "score":0.95 } ] }
-   ```
-
-The app runs both automatically: look up the work order, search the Document Centre with its
-`documentQuery`, then fetch the top result's `url` (a `GET {API}/documents/fetch?src=…` proxy so
-the browser never needs SharePoint auth/CORS) and run it through the same open→auto-detect→fill
-pipeline as a manual upload — so the tech lands on the prefilled form. The endpoint URL is
-configurable at runtime (`localStorage["asaaei:workorderApi"]`) or build time
-(`VITE_WORKORDER_API`), so IT can point it at their server with no rebuild. Until it is set, the
-search box is a **preview** that explains what's needed rather than returning fake data.
-
-**What we need from Basis/IT to turn it on:**
-
-1. **SAP read for a work order** — a **BAPI** (`BAPI_ALM_ORDER_GET_DETAIL`) or an **OData/SAP
-   Gateway** service that returns order header, status, plant and equipment for a given order
-   number. (OData is easiest to consume from the middleware.)
-2. **The document link** — how a work order points at its inspection document: is it an SAP DMS
-   document (DIR) attached to the order, or a SharePoint/Horizons library keyed by work order?
-   The middleware resolves that to a `documentUrl`.
-3. **Auth** — Entra ID single sign-on so the middleware calls SAP/SharePoint as the signed-in
-   user (or a scoped service account), and the browser call carries that session.
-4. **Hosting/CORS** — a small service (.NET fits a Microsoft/SAP shop; Node also works) reachable
-   from the devices on the network, returning the JSON contract above.
-
-Closing the order (write-back, `BAPI_ALM_ORDER_MAINTAIN`, Phase 5) reuses the same middleware.
+The app is a PWA: installable and fully offline after the first load. A service worker requires the
+app to be **served over http(s)** (an internal host is fine) — offline mode does not work from a
+bare `file://` copy.

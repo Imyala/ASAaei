@@ -23,8 +23,8 @@ body {
 .net.down { color: #b06a00; }
 .tag { color: #5a647a; margin: 4px 0 20px; }
 
-/* ---------- work-order (SAP) search ---------- */
-.wo, .profile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 22px; }
+/* ---------- your details ---------- */
+.profile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 22px; }
 .profile .muted { font-weight: 400; color: #889; font-size: 13px; }
 .wolabel { display: block; font-weight: 600; color: #2a3350; margin-bottom: 8px; }
 .worow { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -32,15 +32,6 @@ body {
   flex: 1; min-width: 180px; padding: 12px 14px; font-size: 16px;
   border: 1px solid var(--line); border-radius: 10px;
 }
-.worow button { padding: 12px 18px; white-space: nowrap; }
-.wonotice { margin-top: 12px; font-size: 13px; line-height: 1.5; color: #4a5266;
-  background: #f4f7fc; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-.wonotice.err { color: #a12; background: #fdeef0; border-color: #f3c9cf; }
-.wonotice code { background: #e3e8f2; padding: 1px 5px; border-radius: 4px; }
-.wocard { display: flex; align-items: center; gap: 12px; margin-top: 12px;
-  border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fbfcfe; }
-.woactions { display: flex; gap: 6px; flex-wrap: wrap; }
-.woactions button { padding: 8px 12px; font-size: 13px; }
 
 .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
 .big {
@@ -48,6 +39,11 @@ body {
   padding: 16px; border-radius: 12px; font-size: 16px; text-align: left; line-height: 1.2;
 }
 .big small { font-weight: 400; font-size: 12px; opacity: .8; }
+/* the two headline choices: fill vs edit */
+.primary-actions { margin-bottom: 22px; }
+.primary-actions .big { padding: 20px; font-size: 18px; gap: 6px; }
+.primary-actions .big small { font-size: 13px; opacity: .9; }
+.secondary-actions { margin-bottom: 4px; }
 .home h2 { font-size: 18px; color: #2a3350; margin: 26px 0 10px; }
 .home h2 .muted { font-weight: 400; color: #889; font-size: 14px; }
 .empty { color: #667; background: #fff; border: 1px dashed var(--line); border-radius: 10px; padding: 16px; font-size: 14px; }
@@ -197,6 +193,45 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   .panel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 30; box-shadow: -4px 0 16px rgba(0,0,0,.15); }
   .toolbar { gap: 6px 10px; }
   .tools { width: 100%; overflow-x: auto; }
+}
+
+/* ---------- document editor ---------- */
+.editor { display: flex; flex-direction: column; height: 100%; }
+.editortoolbar .docname {
+  font: inherit; font-size: 14px; color: #26304a; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 8px; min-width: 140px; max-width: 280px;
+}
+.formatbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  background: #f7f8fb; border-bottom: 1px solid var(--line); padding: 6px 12px;
+  position: sticky; top: 0; z-index: 15;
+}
+.formatbar button {
+  min-width: 34px; padding: 6px 9px; font-size: 14px; line-height: 1;
+  background: #fff; border: 1px solid var(--line); border-radius: 7px;
+}
+.formatbar button:hover { background: #eef2fb; }
+.fmtselect { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.formatbar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 4px; }
+.colorbtn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 32px; padding: 0 8px; font-weight: 700; cursor: pointer;
+  background: #fff; border: 1px solid var(--line); border-radius: 7px;
+}
+.colorbtn.hilite { background: #fffbe6; }
+.colorbtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.editorstage { flex: 1; overflow: auto; background: #e5e8ef; padding: 16px; }
+.editorpage {
+  width: 794px; max-width: 100%; min-height: 1123px; margin: 0 auto;
+  padding: 56px; background: #fff; color: #000;
+  box-shadow: 0 2px 14px rgba(20,30,60,.18); border-radius: 2px; outline: none;
+  font: 14px "Segoe UI", Calibri, system-ui, -apple-system, sans-serif; line-height: 1.4;
+}
+.editorpage:focus { box-shadow: 0 2px 14px rgba(20,30,60,.18), 0 0 0 2px rgba(59,87,166,.35); }
+
+@media (max-width: 720px) {
+  .editorpage { padding: 28px; }
+  .editortoolbar .docname { min-width: 90px; }
 }
 
 /* ---------- crash fallback (error boundary) ---------- */
