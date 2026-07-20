@@ -121,11 +121,10 @@ export async function docxToPdf(arrayBuffer) {
   document.body.appendChild(holder)
 
   try {
-    // Wait for webfonts to finish loading so text is present when we rasterise
-    // (a first-paint capture can otherwise catch invisible/unstyled text).
-    if (document.fonts && document.fonts.ready) {
-      try { await document.fonts.ready } catch { /* fonts API best-effort */ }
-    }
+    // Wait for webfonts and embedded images to finish loading so nothing is
+    // captured before it can paint (a first-paint capture would otherwise
+    // catch invisible text or half-loaded pictures).
+    await waitForAssets(holder)
 
     // Measure fillable cells before rasterising (needs a live layout).
     const autoFields = detectTableFields(holder)
@@ -134,34 +133,76 @@ export async function docxToPdf(arrayBuffer) {
     const pageCount = Math.max(1, Math.ceil(fullHeight / A4_H_PX))
     const scale = 2
 
+    // Render the document in chunks of a few pages instead of one giant image.
+    //   • One canvas for the whole document overflows the browser's maximum
+    //     canvas size — ~16384px per side on desktop and a ~16.7M-pixel *area*
+    //     cap on mobile Safari/iOS — and silently comes back blank, so every
+    //     page lost its content.
+    //   • One html2canvas call *per page* is safe but re-clones and re-lays-out
+    //     the entire document on every call, so a long inspection procedure
+    //     (dozens of pages) took O(n²) time and appeared to hang.
+    // Chunking gets both right: each chunk stays well under the canvas limits,
+    // and the whole document renders in only a handful of passes. Pick the
+    // chunk size from those limits so it holds for any page count.
+    const pageDevW = A4_W_PX * scale
+    const pageDevH = A4_H_PX * scale
+    // Mobile Safari/iOS caps a canvas at ~16.7M pixels of *area*; desktop
+    // browsers allow a far larger area but cap each *side* at ~16384px. Use a
+    // conservative area budget only where it actually binds so desktop can pack
+    // more pages per pass (fewer, faster renders) without risking a blank
+    // canvas on iOS.
+    const MAX_CANVAS_SIDE = 16000 // px — desktop max canvas dimension
+    const MAX_CANVAS_AREA = isMobileSafari() ? 12_000_000 : 200_000_000 // px²
+    const pagesPerChunk = Math.max(
+      1,
+      Math.min(
+        Math.floor(MAX_CANVAS_AREA / (pageDevW * pageDevH)),
+        Math.floor(MAX_CANVAS_SIDE / pageDevH),
+      ),
+    )
+
     const pdfDoc = await PDFDocument.create()
-    for (let i = 0; i < pageCount; i++) {
-      // Rasterise ONE page at a time. Rendering the whole document into a
-      // single html2canvas canvas overflows the browser's maximum canvas
-      // size — roughly 16384px per side on desktop, and a ~16.7M-pixel *area*
-      // cap on mobile Safari/iOS. When that limit is crossed the canvas comes
-      // back completely blank, which is why every page was losing its content.
-      // Cropping page-by-page (via the width/height/x/y options) keeps each
-      // canvas down to a single A4 page — well under every browser limit — so
-      // the text is preserved regardless of how long the document is.
-      const pageCanvas = await html2canvas(holder, {
+    for (let first = 0; first < pageCount; first += pagesPerChunk) {
+      const chunkPages = Math.min(pagesPerChunk, pageCount - first)
+      const chunkCanvas = await html2canvas(holder, {
         scale,
         backgroundColor: '#ffffff',
         useCORS: true,
         width: A4_W_PX,
-        height: A4_H_PX,
+        height: chunkPages * A4_H_PX,
         x: 0,
-        y: i * A4_H_PX,
+        y: first * A4_H_PX,
         windowWidth: A4_W_PX,
         windowHeight: fullHeight,
         scrollX: 0,
         scrollY: 0,
       })
 
-      const png = await pdfDoc.embedPng(pageCanvas.toDataURL('image/png'))
-      const page = pdfDoc.addPage([A4_W_PT, A4_H_PT])
-      // The page canvas matches A4's aspect ratio, so it fills the page 1:1.
-      page.drawImage(png, { x: 0, y: 0, width: A4_W_PT, height: A4_H_PT })
+      // Slice the chunk into individual A4 pages and add each to the PDF.
+      for (let j = 0; j < chunkPages; j++) {
+        const slice = document.createElement('canvas')
+        slice.width = chunkCanvas.width
+        slice.height = pageDevH
+        const ctx = slice.getContext('2d')
+        ctx.fillStyle = '#fff'
+        ctx.fillRect(0, 0, slice.width, slice.height)
+        // Clamp the source height so the final slice never reads past the
+        // chunk canvas (html2canvas can round its output height by a pixel).
+        const srcY = j * pageDevH
+        const srcH = Math.min(pageDevH, chunkCanvas.height - srcY)
+        if (srcH > 0) {
+          ctx.drawImage(
+            chunkCanvas,
+            0, srcY, chunkCanvas.width, srcH,
+            0, 0, chunkCanvas.width, srcH,
+          )
+        }
+
+        const png = await pdfDoc.embedPng(slice.toDataURL('image/png'))
+        const page = pdfDoc.addPage([A4_W_PT, A4_H_PT])
+        // The slice matches A4's aspect ratio, so it fills the page 1:1.
+        page.drawImage(png, { x: 0, y: 0, width: A4_W_PT, height: A4_H_PT })
+      }
     }
     // Drop any field whose page fell outside the produced range (safety).
     const fields = autoFields.filter((f) => f.page >= 0 && f.page < pageCount)
@@ -169,6 +210,35 @@ export async function docxToPdf(arrayBuffer) {
   } finally {
     document.body.removeChild(holder)
   }
+}
+
+// iOS/iPadOS Safari (and desktop Safari) enforce the tight per-canvas *area*
+// limit that other browsers don't. iPadOS reports a desktop "Macintosh" UA, so
+// also treat a touch-capable Mac as mobile Safari.
+function isMobileSafari() {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  const iOS = /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && typeof document !== 'undefined' && 'ontouchend' in document)
+  const safari = /Safari/.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|Edg|Android/.test(ua)
+  return iOS || safari
+}
+
+// Wait for fonts and any embedded images inside `el` to load before we
+// rasterise, capped so a stuck asset can never hang the conversion.
+async function waitForAssets(el, timeoutMs = 8000) {
+  const waits = []
+  if (document.fonts && document.fonts.ready) waits.push(document.fonts.ready)
+  const imgs = Array.from(el.querySelectorAll('img'))
+  for (const img of imgs) {
+    if (img.complete) continue
+    waits.push(new Promise((resolve) => {
+      img.addEventListener('load', resolve, { once: true })
+      img.addEventListener('error', resolve, { once: true })
+    }))
+  }
+  if (!waits.length) return
+  const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs))
+  try { await Promise.race([Promise.all(waits), timeout]) } catch { /* best-effort */ }
 }
 
 // Strip HTML to plain text (with line breaks) for identity sniffing.
