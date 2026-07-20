@@ -13,6 +13,12 @@ export default defineConfig({
   // that previously produced a blank page when BASE_PATH was hard-coded to
   // /ASAaei/ and every asset 404'd. BASE_PATH still overrides it if ever needed.
   base: process.env.BASE_PATH || './',
+  // Stamp the build time into the bundle so the running version is visible in
+  // the UI — this makes it obvious when a browser/service-worker is still
+  // serving an old cached build after a redeploy.
+  define: {
+    __BUILD_ID__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+  },
   plugins: [
     react(),
     VitePWA({

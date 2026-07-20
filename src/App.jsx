@@ -9,6 +9,10 @@ import {
 import { searchWorkOrder, searchDocumentCentre } from './sap.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
 
+// Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
+// running version is identifiable when diagnosing stale caches.
+const BUILD_ID = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev'
+
 // ---- field defaults (sizes are fractions of the page) --------------------
 const DEFAULT_SIZE = {
   text: { wPct: 0.28, hPct: 0.028 },
@@ -158,7 +162,9 @@ export default function App() {
     const p = pendingRef.current || { action: 'new' }
     setBusy(/\.docx$/i.test(file.name) ? 'Converting Word document…' : 'Opening document…')
     try {
-      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file)
+      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file, {
+        onProgress: (done, total) => setBusy(`Converting Word document… (page ${Math.min(done + 1, total)} of ${total})`),
+      })
       if (p.action === 'new') {
         // Recognise the form and auto-apply a saved layout if we have one;
         // otherwise fall back to auto-detected fields (or a clean canvas).
@@ -256,7 +262,9 @@ export default function App() {
       const blob = await resp.blob()
       const name = wo.documentName || `WO-${wo.number}.pdf`
       const file = new File([blob], name, { type: blob.type })
-      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file)
+      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file, {
+        onProgress: (done, total) => setBusy(`Converting Word document… (page ${Math.min(done + 1, total)} of ${total})`),
+      })
       await openDocument(bytes, name, { autoFields, docKey: dk, docTitle: dt })
     } catch (err) {
       alert(err.message || 'Could not open the work order document.')
@@ -535,6 +543,7 @@ export default function App() {
           centre (updated often). The last copy is kept for offline use.
           SharePoint/“Horizons”, N: drive save and SAP close-out arrive in later phases —
           see <code>docs/ARCHITECTURE.md</code>.</p>
+        <p className="hint" style={{ opacity: 0.6, fontSize: 12 }}>Build {BUILD_ID}</p>
       </div>
     )
   }

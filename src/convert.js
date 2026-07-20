@@ -102,7 +102,7 @@ function clampPct(v) {
 // fillable table cells, rasterise with html2canvas, slice into pages, and
 // assemble a PDF with pdf-lib. The result is treated exactly like an uploaded
 // PDF from then on, and the detected fields ride along as `autoFields`.
-export async function docxToPdf(arrayBuffer) {
+export async function docxToPdf(arrayBuffer, { onProgress } = {}) {
   const { value: html } = await mammoth.convertToHtml({ arrayBuffer })
   const identity = extractIdentity(htmlToText(html))
 
@@ -164,6 +164,10 @@ export async function docxToPdf(arrayBuffer) {
     const pdfDoc = await PDFDocument.create()
     for (let first = 0; first < pageCount; first += pagesPerChunk) {
       const chunkPages = Math.min(pagesPerChunk, pageCount - first)
+      // Report progress and yield to the event loop so the UI can repaint —
+      // otherwise a long document looks frozen even though it is converting.
+      if (onProgress) onProgress(first, pageCount)
+      await new Promise((r) => setTimeout(r, 0))
       const chunkCanvas = await html2canvas(holder, {
         scale,
         backgroundColor: '#ffffff',
@@ -204,6 +208,7 @@ export async function docxToPdf(arrayBuffer) {
         page.drawImage(png, { x: 0, y: 0, width: A4_W_PT, height: A4_H_PT })
       }
     }
+    if (onProgress) onProgress(pageCount, pageCount)
     // Drop any field whose page fell outside the produced range (safety).
     const fields = autoFields.filter((f) => f.page >= 0 && f.page < pageCount)
     return { bytes: await pdfDoc.save(), autoFields: fields, ...identity }
@@ -251,7 +256,7 @@ function htmlToText(html) {
 // Route any uploaded file to PDF bytes, auto-detected fields, and identity.
 // • .docx  -> converted here, fields read from the Word table structure.
 // • .pdf   -> passed through; fields read from the PDF (AcroForm or text grid).
-export async function fileToPdfBytes(file) {
+export async function fileToPdfBytes(file, { onProgress } = {}) {
   const buf = await file.arrayBuffer()
   if (/\.pdf$/i.test(file.name)) {
     const bytes = new Uint8Array(buf)
@@ -263,6 +268,6 @@ export async function fileToPdfBytes(file) {
     if (!identity.docTitle) identity.docTitle = file.name.replace(/\.pdf$/i, '')
     return { bytes, autoFields, ...identity }
   }
-  if (/\.docx$/i.test(file.name)) return await docxToPdf(buf)
+  if (/\.docx$/i.test(file.name)) return await docxToPdf(buf, { onProgress })
   throw new Error('Unsupported file type. Please use a PDF or Word (.docx) file.')
 }
