@@ -435,7 +435,7 @@ export default function App() {
           <h1>ASAaei</h1>
           <span className={'net ' + (online ? 'up' : 'down')}>{online ? 'Online' : 'Offline'}</span>
         </header>
-        <p className="tag">Choose Fill out or Edit to get started. Works offline on iPad, tablet, and desktop.</p>
+        <p className="tag">Choose an action below to get started. Works offline on iPad, tablet, and desktop.</p>
 
         <section className="homecard">
           <h2>Start here</h2>
