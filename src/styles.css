@@ -14,17 +14,23 @@ body {
 }
 
 /* ---------- home ---------- */
-.home { max-width: 820px; margin: 0 auto; padding: 24px; }
-.homehead { display: flex; align-items: center; gap: 14px; }
+.home { max-width: 860px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.homehead { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .homehead h1 { font-size: 40px; color: var(--blue); margin: 0; letter-spacing: 1px; flex: 1; }
 .homehead button { padding: 6px 12px; }
-.net { font-size: 13px; font-weight: 600; }
+.net { font-size: 13px; font-weight: 700; padding: 5px 10px; border-radius: 999px; border: 1px solid currentColor; }
 .net.up { color: #2f9e57; }
 .net.down { color: #b06a00; }
-.tag { color: #5a647a; margin: 4px 0 20px; }
+.tag { color: #5a647a; margin: 0; }
+.homecard {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+}
 
 /* ---------- your details ---------- */
-.profile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 22px; }
+.profile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 0; }
 .profile .muted { font-weight: 400; color: #889; font-size: 13px; }
 .wolabel { display: block; font-weight: 600; color: #2a3350; margin-bottom: 8px; }
 .worow { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -40,11 +46,11 @@ body {
 }
 .big small { font-weight: 400; font-size: 12px; opacity: .8; }
 /* the two headline choices: fill vs edit */
-.primary-actions { margin-bottom: 22px; }
+.primary-actions { margin-top: 10px; }
 .primary-actions .big { padding: 20px; font-size: 18px; gap: 6px; }
 .primary-actions .big small { font-size: 13px; opacity: .9; }
-.secondary-actions { margin-bottom: 4px; }
-.home h2 { font-size: 18px; color: #2a3350; margin: 26px 0 10px; }
+.secondary-actions { margin-top: 10px; }
+.home h2 { font-size: 18px; color: #2a3350; margin: 0; }
 .home h2 .muted { font-weight: 400; color: #889; font-size: 14px; }
 .empty { color: #667; background: #fff; border: 1px dashed var(--line); border-radius: 10px; padding: 16px; font-size: 14px; }
 .tpllist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -57,7 +63,7 @@ body {
 .tplmeta small { color: #889; font-size: 12px; }
 .tplactions { display: flex; gap: 6px; }
 .tplactions button { padding: 6px 12px; font-size: 13px; }
-.hint { color: #667; font-size: 13px; line-height: 1.5; margin-top: 22px; }
+.hint { color: #667; font-size: 13px; line-height: 1.5; margin-top: 0; }
 .hint code { background: #e3e8f2; padding: 1px 5px; border-radius: 4px; }
 .link { border: none; background: none; color: var(--blue); padding: 4px 6px; }
 

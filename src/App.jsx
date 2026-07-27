@@ -433,23 +433,26 @@ export default function App() {
         <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={onImport} />
         <header className="homehead">
           <h1>ASAaei</h1>
-          <span className={'net ' + (online ? 'up' : 'down')}>{online ? '● Online' : '○ Offline'}</span>
+          <span className={'net ' + (online ? 'up' : 'down')}>{online ? 'Online' : 'Offline'}</span>
         </header>
-        <p className="tag">Fill out and edit documents — works offline on iPad, tablet &amp; desktop.</p>
+        <p className="tag">Fill and edit documents in one place. Works offline on iPad, tablet, and desktop.</p>
 
-        <section className="actions primary-actions">
+        <section className="homecard">
+          <h2>Start here</h2>
+          <div className="actions primary-actions">
           <button className="big primary" onClick={() => pickFile('new')}>
-            📝 Fill out a document
-            <small>Open a PDF or Word form — fillable boxes are detected automatically, ready to tick, type and sign. For technicians on the job.</small>
+            Fill out a document
+            <small>Open a PDF or Word form and start filling boxes right away.</small>
           </button>
           <button className="big primary" onClick={openEditor}>
-            ✏️ Edit a document
-            <small>Open or create a document and change its text, formatting and layout — like Word. For engineers updating forms.</small>
+            Edit a document
+            <small>Open or create a document and update text, formatting, and layout.</small>
           </button>
+          </div>
         </section>
 
-        <section className="profile">
-          <label className="wolabel">Your details <span className="muted">— auto-filled into forms you fill out (name, SAP ID, date)</span></label>
+        <section className="profile homecard">
+          <label className="wolabel">Your details <span className="muted">These are auto-filled in forms (name, SAP ID, date).</span></label>
           <div className="worow">
             <input className="woinput" placeholder="Your name" value={profile.name || ''}
               onChange={(e) => updateProfile({ name: e.target.value })} />
@@ -458,41 +461,20 @@ export default function App() {
           </div>
         </section>
 
-        <section className="actions secondary-actions">
-          <button className="big" onClick={startBlank}>
-            ▢ Blank fillable page<small>Place fields on an empty A4 sheet</small>
-          </button>
-          <button className="big" onClick={() => importRef.current?.click()}>
-            ⇩ Import fill layout<small>Load a saved field layout shared as a file</small>
-          </button>
+        <section className="homecard">
+          <h2>More options</h2>
+          <div className="actions secondary-actions">
+            <button className="big" onClick={startBlank}>
+              Blank fillable page<small>Place fields on an empty A4 sheet.</small>
+            </button>
+            <button className="big" onClick={() => importRef.current?.click()}>
+              Import fill layout<small>Load a shared field layout file.</small>
+            </button>
+          </div>
         </section>
 
-        <h2>Saved fill layouts <span className="muted">— optional</span></h2>
         {busy && <div className="busy">{busy}</div>}
-        {templates.length === 0 ? (
-          <p className="empty">You don’t need any of these. Every form you open is filled in
-            <b> automatically</b> — the app reads that document’s own boxes each time, so re-issued
-            versions just work with nothing to set up. Saving a layout here is only a fallback for
-            an odd form the detector can’t read; it never overrides automatic detection.</p>
-        ) : (
-          <ul className="tpllist">
-            {templates.map((t) => (
-              <li key={t.id} className="tplcard">
-                <div className="tplmeta">
-                  <b>{t.name}</b>
-                  <small>{t.fieldCount} fields{t.docKey ? ` · auto-applies to ${t.docKey}` : ''}</small>
-                </div>
-                <div className="tplactions">
-                  <button className="primary" onClick={() => useTemplate(t)}>Use</button>
-                  <button onClick={() => doExport(t)}>Export</button>
-                  <button className="danger" onClick={() => removeTemplate(t)}>Delete</button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="hint">Open documents straight from your device and save the finished file
-          wherever you like. Everything runs in your browser — nothing is uploaded.</p>
+        <p className="hint">Open documents from your device and save finished files locally. Nothing is uploaded.</p>
         <p className="hint" style={{ opacity: 0.6, fontSize: 12 }}>Build {BUILD_ID}</p>
       </div>
     )
@@ -505,16 +487,16 @@ export default function App() {
         <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf" hidden onChange={onFileChosen} />
         <header className="homehead">
           <h1>{fileName}</h1>
-          <button onClick={goHome}>← Home</button>
+          <button onClick={goHome}>Home</button>
         </header>
         <p className="tag">Open the document to apply this layout and fill it in.</p>
         <section className="actions">
           <button className="big primary" onClick={() => pickFile('apply', activeTemplateId)}>
-            ⇩ Open document<small>Choose the PDF or Word file to fill in with this layout</small>
+            Open document<small>Choose the PDF or Word file to fill with this layout.</small>
           </button>
           {cachedDoc && (
             <button className="big" onClick={useOfflineCopy}>
-              ▣ Reopen last file<small>Saved {new Date(cachedDoc.savedAt).toLocaleString()}</small>
+              Reopen last file<small>Saved {new Date(cachedDoc.savedAt).toLocaleString()}</small>
             </button>
           )}
         </section>
