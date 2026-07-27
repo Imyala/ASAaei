@@ -59,8 +59,14 @@ export function detectTableFields(holder) {
         if (cell.tagName === 'TH') return
         // Skip cells with a non-white/non-transparent computed background —
         // these are shaded header or label rows that aren't meant to be filled.
+        // Browsers always normalise computed colours to rgb()/rgba() form, so
+        // we don't need to handle '#fff', 'white', etc. separately.
         const bg = window.getComputedStyle(cell).backgroundColor
-        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgb(255, 255, 255)') return
+        const isWhite = !bg
+          || bg === 'rgba(0, 0, 0, 0)'
+          || bg === 'rgb(255, 255, 255)'
+          || bg === 'rgba(255, 255, 255, 1)'
+        if (!isWhite) return
         if (norm(cell.textContent).length > 0) return // already has content
         if (ci === labelIdx) return // the row's own label cell
         if (isGrid && ci === 0) return // task-description column stays blank

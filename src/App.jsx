@@ -356,7 +356,7 @@ export default function App() {
           await writable.close()
           return
         } catch (err) {
-          if (err.name === 'AbortError') return // user cancelled the dialog
+          if (err.name === 'AbortError') return // user canceled the dialog
           // Fall through to the legacy download path on any other error.
         }
       }
