@@ -435,7 +435,7 @@ export default function App() {
           <h1>ASAaei</h1>
           <span className={'net ' + (online ? 'up' : 'down')}>{online ? 'Online' : 'Offline'}</span>
         </header>
-        <p className="tag">Fill and edit documents in one place. Works offline on iPad, tablet, and desktop.</p>
+        <p className="tag">Choose Fill out or Edit to get started. Works offline on iPad, tablet, and desktop.</p>
 
         <section className="homecard">
           <h2>Start here</h2>
@@ -452,7 +452,7 @@ export default function App() {
         </section>
 
         <section className="profile homecard">
-          <label className="wolabel">Your details <span className="muted">— these are auto-filled into forms (name, SAP ID, date).</span></label>
+          <label className="wolabel">Your details <span className="muted">— this information is filled into forms automatically (name, SAP ID, date).</span></label>
           <div className="worow">
             <input className="woinput" placeholder="Your name" value={profile.name || ''}
               onChange={(e) => updateProfile({ name: e.target.value })} />
