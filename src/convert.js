@@ -54,6 +54,19 @@ export function detectTableFields(holder) {
       const rowLabel = labelIdx >= 0 ? norm(cells[labelIdx].textContent) : ''
 
       cells.forEach((cell, ci) => {
+        // Skip header cells (<th>) — they carry the column labels and are
+        // visually greyed out; filling them makes no sense.
+        if (cell.tagName === 'TH') return
+        // Skip cells with a non-white/non-transparent computed background —
+        // these are shaded header or label rows that aren't meant to be filled.
+        // Browsers always normalise computed colours to rgb()/rgba() form, so
+        // we don't need to handle '#fff', 'white', etc. separately.
+        const bg = window.getComputedStyle(cell).backgroundColor
+        const isWhite = !bg
+          || bg === 'rgba(0, 0, 0, 0)'
+          || bg === 'rgb(255, 255, 255)'
+          || bg === 'rgba(255, 255, 255, 1)'
+        if (!isWhite) return
         if (norm(cell.textContent).length > 0) return // already has content
         if (ci === labelIdx) return // the row's own label cell
         if (isGrid && ci === 0) return // task-description column stays blank
@@ -126,7 +139,7 @@ export async function docxToPdf(arrayBuffer, { onProgress } = {}) {
 // and returns them as page-relative `autoFields`) and the document editor's
 // "export to PDF" (`detectFields: false`). Uses the same DOCX_CSS as the
 // on-screen editor, so the exported PDF matches what the user was editing.
-export async function htmlToPdf(html, { onProgress, detectFields = false } = {}) {
+export async function htmlToPdf(html, { onProgress, detectFields = false, scale = 1.5 } = {}) {
   const holder = document.createElement('div')
   holder.className = 'docx-holder'
   Object.assign(holder.style, {
@@ -164,7 +177,6 @@ export async function htmlToPdf(html, { onProgress, detectFields = false } = {})
 
     const fullHeight = Math.max(holder.scrollHeight, A4_H_PX)
     const pageCount = Math.max(1, Math.ceil(fullHeight / A4_H_PX))
-    const scale = 2
 
     // Render the document in chunks of a few pages instead of one giant image.
     //   • One canvas for the whole document overflows the browser's maximum
@@ -185,7 +197,7 @@ export async function htmlToPdf(html, { onProgress, detectFields = false } = {})
     // more pages per pass (fewer, faster renders) without risking a blank
     // canvas on iOS.
     const MAX_CANVAS_SIDE = 16000 // px — desktop max canvas dimension
-    const MAX_CANVAS_AREA = isMobileSafari() ? 12_000_000 : 200_000_000 // px²
+    const MAX_CANVAS_AREA = isMobileSafari() ? 16_000_000 : 200_000_000 // px²
     const pagesPerChunk = Math.max(
       1,
       Math.min(

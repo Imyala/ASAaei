@@ -69,14 +69,16 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
       drawText(value, vx + 2, vy + (fh + size) / 2, size, font, rgb(0, 0, 0))
     } else if (f.type === 'status') {
       // Tri-state OK / Fail / N/A cell — draw the chosen value centred.
+      // Fixed size keeps all status labels visually uniform regardless of
+      // the individual cell height in the original document.
       const value = String(f.value ?? '')
       if (!value) continue
-      const size = Math.max(8, Math.min(12, fh * 0.62))
+      const size = 10
       const tw = fontBold.widthOfTextAtSize(value, size)
       drawText(value, vx + Math.max(1, (fw - tw) / 2), vy + (fh + size) / 2, size,
         fontBold, value === 'Fail' ? rgb(0.7, 0.1, 0.1) : rgb(0, 0, 0))
     } else if (f.type === 'checkgroup') {
-      const size = Math.max(8, Math.min(12, fh * 0.6))
+      const size = 10
       let cx = vx
       for (const opt of ['OK', 'N/A', 'Fail']) {
         const mark = f.value === opt ? '[X]' : '[  ]'
