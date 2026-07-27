@@ -452,7 +452,7 @@ export default function App() {
         </section>
 
         <section className="profile homecard">
-          <label className="wolabel">Your details <span className="muted">These are auto-filled in forms (name, SAP ID, date).</span></label>
+          <label className="wolabel">Your details <span className="muted">These are auto-filled into forms (name, SAP ID, date).</span></label>
           <div className="worow">
             <input className="woinput" placeholder="Your name" value={profile.name || ''}
               onChange={(e) => updateProfile({ name: e.target.value })} />
