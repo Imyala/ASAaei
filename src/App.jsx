@@ -342,9 +342,28 @@ export default function App() {
     try {
       const out = await bakePdf(pdfBytes, fields, isNatural ? null : order)
       const blob = new Blob([out], { type: 'application/pdf' })
+      const suggestedName = `${fileName}${locked ? '-signed' : ''}.pdf`
+      // Use the File System Access API when available so the user can choose
+      // both the file name and the save location.
+      if (typeof window.showSaveFilePicker === 'function') {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }],
+          })
+          const writable = await handle.createWritable()
+          await writable.write(blob)
+          await writable.close()
+          return
+        } catch (err) {
+          if (err.name === 'AbortError') return // user cancelled the dialog
+          // Fall through to the legacy download path on any other error.
+        }
+      }
+      // Fallback: trigger a browser download (no location prompt in most browsers).
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url; a.download = `${fileName}${locked ? '-signed' : ''}.pdf`; a.click()
+      a.href = url; a.download = suggestedName; a.click()
       URL.revokeObjectURL(url)
     } catch (e) { alert('Could not build the PDF.\n' + e.message) }
     finally { setBusy('') }
