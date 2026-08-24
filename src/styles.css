@@ -361,3 +361,67 @@ button.danger:hover { background: #fdf1f2; }
   background: #f2f5fb; color: #4a5570; font-size: 12px; line-height: 1.55;
 }
 .convnote code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; }
+
+/* ---------- opening a document ---------- */
+/* The app leaves the home screen the moment a file is chosen. A conversion
+   running behind the home screen read as "nothing happened". */
+.openingscreen { min-height: 100%; justify-content: flex-start; }
+.openingcard { padding: 28px; text-align: center; margin-top: 6vh; }
+.openingtitle { font-size: 20px; color: #2a3350; margin: 0 0 6px; }
+.openingtitle.error { color: #a3323f; }
+.openingname {
+  color: #5a647a; font-size: 14px; margin: 0 0 20px;
+  word-break: break-word; font-weight: 600;
+}
+.openingbar {
+  height: 8px; border-radius: 999px; background: #e3e8f2;
+  overflow: hidden; margin: 0 auto 14px; max-width: 460px;
+}
+.openingbar-fill {
+  height: 100%; background: var(--blue-2); border-radius: 999px;
+  transition: width .25s ease;
+}
+/* No page count to count against yet — sweep rather than fake a percentage. */
+.openingbar-fill.indeterminate {
+  width: 35%;
+  animation: opening-sweep 1.1s ease-in-out infinite;
+}
+@keyframes opening-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+.openingstage { color: #2a3350; font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+.openingdetail { color: #6b7488; font-size: 13px; line-height: 1.5; margin: 0 auto; max-width: 420px; }
+.openingerror {
+  color: #8a3038; background: #fdf1f2; border: 1px solid #eccdd1;
+  border-radius: 9px; padding: 12px 14px; font-size: 14px; line-height: 1.55;
+  text-align: left; white-space: pre-wrap; margin: 0 0 18px;
+}
+.openingactions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.openingactions .big { align-items: center; padding: 12px 20px; }
+.openingcancel {
+  margin-top: 20px; padding: 8px 20px; font-size: 14px;
+  color: #6b7488; background: none; border: 1px solid var(--line);
+}
+
+/* ---------- a page whose image is still drawing ---------- */
+/* The page frame and its fields are usable straight away; only the picture of
+   the page arrives late, so this is a placeholder, not a blocker. */
+.pageloading {
+  position: absolute; inset: 0; background: #fff;
+  background-image: linear-gradient(100deg, #fff 40%, #f1f4fa 50%, #fff 60%);
+  background-size: 300% 100%;
+  animation: page-shimmer 1.3s ease-in-out infinite;
+}
+@keyframes page-shimmer {
+  0%   { background-position: 140% 0; }
+  100% { background-position: -40% 0; }
+}
+.pagechip-pending {
+  width: 66px; height: 90px; border: 1px solid var(--line);
+  background: #f4f6fb; display: block;
+}
+@media (prefers-reduced-motion: reduce) {
+  .openingbar-fill.indeterminate, .pageloading { animation: none; }
+  .openingbar-fill.indeterminate { width: 100%; opacity: .4; }
+}

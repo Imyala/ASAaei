@@ -137,6 +137,7 @@ get closest-proportion stand-ins and an honest warning.
   - `App.jsx` — home screen, the fill editor, page picker, saved layouts
   - `bake.js` — draw field values onto the PDF and flatten
   - `pdfFields.js` / `pdfBoxes.js` / `pdfGrid.js` — PDF field/box detection
+  - `pdfRender.js` — progressive page rendering (geometry first, images behind)
   - `store.js` — IndexedDB storage for saved fill layouts (templates)
   - `profile.js` — the user's name / SAP ID / today's date autofill
 - **Converter (`server/`):**
@@ -148,7 +149,38 @@ get closest-proportion stand-ins and an honest warning.
 - **Tests:** `src/pdfGrid.test.mjs` (grid geometry and field placement),
   `server/fonts.test.mjs` (zip reading, font matching). `npm test` runs both.
 
-## 6. Field detection — the rules that matter
+## 6. Opening a document — why it feels fast
+
+Conversion is only part of the wait, and it used to be the smaller part.
+
+The app previously rendered **every** page to a PNG data URL and showed nothing
+until the last one finished. On a 37-page procedure that was ~9 s of dead time
+*after* conversion, all of it spent with the home screen still on display and a
+single line of small text at the bottom — so a tap that was working looked like
+a tap that had half-worked. It also left 6.6 MB of base64 strings in React
+state (nearer 15 MB for an 80-page document, which an iPad feels).
+
+Three changes, in `pdfRender.js` and the open path:
+
+1. **The home screen is left immediately.** Choosing a file switches to an
+   opening screen with the real stage, a progress bar and a working Cancel.
+   Cancellation runs all the way down: an `AbortSignal` aborts the converter
+   request, and the in-browser rasteriser checks it between chunks. An abort is
+   deliberately *not* treated as "converter unavailable" — otherwise cancelling
+   would kick off the browser fallback, i.e. the exact work being cancelled.
+2. **Page geometry comes back before any rasterising.** The document is on
+   screen and fillable as soon as the page sizes are known; images arrive
+   behind it, and rendering follows the scroll position, so jumping to page 30
+   does not mean waiting for pages 1-29.
+3. **Page images are JPEG object URLs, not PNG data URLs.** Quicker to encode
+   and a handle instead of megabytes of string. They are revoked when the
+   document closes or another one replaces it.
+
+Measured on the AEI samples, cold cache: first page visible in **1.7-7.1 s**,
+where the wait is now the LibreOffice conversion itself. The work after
+conversion is ~0.7 s regardless of page count.
+
+## 7. Field detection — the rules that matter
 
 `pdfGrid.js` turns a page's ruled cells into fields. The non-obvious parts, each of which exists
 because of a specific way it went wrong on a real form:
@@ -170,7 +202,7 @@ because of a specific way it went wrong on a real form:
 - **Status cells carry their column's wording.** A column headed "Pass/Fail" taps through
   Pass / N/A / Fail rather than stamping "OK" into a form that never uses the word.
 
-## 7. Offline / installable
+## 8. Offline / installable
 
 The app is a PWA: installable and fully offline after the first load. A service worker requires the
 app to be **served over http(s)** (an internal host is fine) — offline mode does not work from a

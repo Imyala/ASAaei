@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { renderPdfToImages } from './pdfRender.js'
+import { startPdfRender, revokePageImages } from './pdfRender.js'
 import { bakePdf, makeBlankPdf } from './bake.js'
 import { fileToPdfBytes } from './convert.js'
 import {
@@ -82,6 +82,9 @@ export default function App() {
   // or 'approximate' (in-browser rasteriser).
   const [fidelity, setFidelity] = useState('')
   const [missingFonts, setMissingFonts] = useState([])
+  // The document currently being opened: { name, stage, detail, progress,
+  // cancel, error }. Non-null means the opening screen is what to show.
+  const [opening, setOpening] = useState(null)
 
   // editor state
   const [pages, setPages] = useState([])
@@ -113,6 +116,11 @@ export default function App() {
   const importRef = useRef(null)
   const pendingRef = useRef(null) // { action, templateId }
   const dragRef = useRef(null)
+  // The in-flight page render, so opening another document can stop it and
+  // reclaim its images rather than leaving them drawing into nothing.
+  const renderRef = useRef(null)
+  // Lets the opening screen's Cancel actually stop the work in flight.
+  const openJobRef = useRef(null)
 
   const selected = fields.find((f) => f.id === selectedId) || null
 
@@ -130,10 +138,30 @@ export default function App() {
   useEffect(() => { discoverConverter().then(setConverter) }, [])
 
   // ---- rendering a document into the editor -------------------------------
+  // Page geometry comes back at once, so the document is on screen and fillable
+  // immediately; the page images arrive behind it, nearest the page being read
+  // first. Waiting for all of them before showing anything is what made opening
+  // a long procedure feel like the app had stalled.
   const showBytesInEditor = useCallback(async (bytes, name, opts) => {
-    const imgs = await renderPdfToImages(bytes, 1.5)
+    const render = await startPdfRender(bytes, {
+      onPage: (index, patch) => setPages((prev) => {
+        // A newer document may have replaced this one mid-render.
+        if (renderRef.current !== render || !prev[index]) {
+          if (patch.src) URL.revokeObjectURL(patch.src)
+          return prev
+        }
+        const next = [...prev]
+        next[index] = { ...next[index], ...patch }
+        return next
+      }),
+    })
+    // Stop the previous document's render and free its images.
+    renderRef.current?.cancel()
+    setPages((old) => { revokePageImages(old); return render.sizes })
+    renderRef.current = render
+
+    const imgs = render.sizes
     setPdfBytes(bytes)
-    setPages(imgs)
     setFileName(name.replace(/\.(pdf|docx?)$/i, '') || 'document')
     setNeedSource(false)
     // How this document was produced travels with it. Setting it here, rather
@@ -200,20 +228,44 @@ export default function App() {
     if (!file) return
     const p = pendingRef.current || { action: 'new' }
     const isWord = /\.docx?$/i.test(file.name)
-    setBusy(isWord ? 'Converting Word document…' : 'Opening document…')
+
+    // Leave the home screen NOW. Converting a long Word document takes a few
+    // seconds, and this used to happen with the home screen still on display
+    // and one line of small text at the bottom — so it looked as though the tap
+    // had half-worked. An opening screen makes the wait legible instead.
+    const job = new AbortController()
+    openJobRef.current = job
+    setOpening({
+      name: file.name,
+      stage: isWord ? 'Converting the Word document…' : 'Opening the document…',
+      detail: isWord && converter?.ok
+        ? `Using ${converter.info?.engine || 'LibreOffice'} — the layout will match Word exactly.`
+        : isWord
+          ? 'Converting in this browser. This is slower and the layout is approximate.'
+          : '',
+      progress: 0,
+      cancel: () => job.abort(),
+    })
+    setScreen('opening')
+    setBusy('')
     try {
       const {
         bytes, autoFields = [], docKey: dk = '', docTitle: dt = '',
         fidelity: fid = '', missingFonts: fonts = [],
       } = await fileToPdfBytes(file, {
-        onProgress: (done, total, meta) => setBusy(
+        signal: job.signal,
+        onProgress: (done, total, meta) => setOpening((o) => o && ({
+          ...o,
           // The LibreOffice route has no page-by-page progress to report — it
           // returns the whole PDF at once, and quickly — so don't invent one.
-          meta?.stage === 'service'
+          stage: meta?.stage === 'service'
             ? 'Converting with LibreOffice…'
-            : `Converting in the browser… (page ${Math.min(done + 1, total)} of ${total})`,
-        ),
+            : `Converting in this browser — page ${Math.min(done + 1, total)} of ${total}…`,
+          progress: meta?.stage === 'service' || !total ? 0 : (done / total),
+        })),
       })
+      if (job.signal.aborted) return
+      setOpening((o) => o && { ...o, stage: 'Laying out the pages…', progress: 0 })
       const provenance = { fidelity: fid, missingFonts: fonts }
       if (p.action === 'new') {
         // Recognise the form and auto-apply a saved layout if we have one;
@@ -232,10 +284,24 @@ export default function App() {
         await showBytesInEditor(bytes, file.name, { ...provenance })
       }
     } catch (err) {
-      alert(err.message || 'Could not open that file.')
+      if (job.signal.aborted || err?.name === 'AbortError') {
+        // The user cancelled — that is not a failure, so no alarm about it.
+        setScreen('home')
+        return
+      }
+      // Report the failure on the opening screen rather than in an alert the
+      // user has to dismiss before they can see where they are.
+      setOpening((o) => o && {
+        ...o,
+        error: err?.message || 'That file could not be opened.',
+        stage: '',
+      })
+      return
     } finally {
       setBusy('')
+      if (openJobRef.current === job) openJobRef.current = null
     }
+    setOpening(null)
   }
 
   const pickFile = (action, templateId) => {
@@ -428,9 +494,25 @@ export default function App() {
   }
 
   const goHome = () => {
-    setScreen('home'); setPages([]); setFields([]); setPageOrder([]); setNeedSource(false)
+    // Stop drawing pages nobody is looking at any more, and hand back the
+    // memory their images hold.
+    renderRef.current?.cancel()
+    renderRef.current = null
+    setPages((old) => { revokePageImages(old); return [] })
+    setScreen('home'); setFields([]); setPageOrder([]); setNeedSource(false)
     setAppliedTemplate(''); setDocKey(''); setDocTitle(''); setShowPages(false)
     setEditorInit(null); refreshTemplates()
+  }
+
+  // Render whichever page is on screen next. Without this, jumping to page 30
+  // of a long form would mean waiting for pages 1-29 to be drawn first.
+  const onStageScroll = (e) => {
+    const el = e.currentTarget
+    const order = orderedSelection()
+    if (!order.length || !renderRef.current) return
+    const frac = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight)
+    const pos = Math.round(frac * (order.length - 1))
+    renderRef.current.prioritise(order[Math.min(Math.max(pos, 0), order.length - 1)])
   }
 
   const togglePage = (i) => setSelectedPages((prev) => {
@@ -480,6 +562,51 @@ export default function App() {
         initialName={editorInit?.name || 'document'}
         onExit={goHome}
       />
+    )
+  }
+
+  // ================= OPENING A DOCUMENT =================
+  // Shown from the moment a file is chosen until the document is on screen.
+  // A long conversion used to happen behind the home screen, which read as the
+  // app having ignored the tap.
+  if (screen === 'opening' && opening) {
+    return (
+      <div className="home openingscreen">
+        <header className="homehead">
+          <h1>ASAaei</h1>
+        </header>
+        <section className="homecard openingcard">
+          {opening.error ? (
+            <>
+              <h2 className="openingtitle error">Could not open this document</h2>
+              <p className="openingname">{opening.name}</p>
+              <p className="openingerror">{opening.error}</p>
+              <div className="openingactions">
+                <button className="big primary" onClick={() => { setOpening(null); setScreen('home') }}>
+                  Back to home
+                </button>
+                <button className="big" onClick={() => { setOpening(null); setScreen('home'); setTimeout(() => setScreen('settings'), 0) }}>
+                  Open settings
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="openingtitle">Opening your document</h2>
+              <p className="openingname">{opening.name}</p>
+              <div className="openingbar">
+                {/* A known page count gives a real bar; otherwise an indeterminate
+                    one, because a made-up percentage is worse than none. */}
+                <div className={'openingbar-fill' + (opening.progress ? '' : ' indeterminate')}
+                  style={opening.progress ? { width: `${Math.round(opening.progress * 100)}%` } : undefined} />
+              </div>
+              <p className="openingstage">{opening.stage}</p>
+              {opening.detail && <p className="openingdetail">{opening.detail}</p>}
+              <button className="openingcancel" onClick={() => opening.cancel?.()}>Cancel</button>
+            </>
+          )}
+        </section>
+      </div>
     )
   }
 
@@ -701,7 +828,9 @@ export default function App() {
                     onPointerDown={(e) => { dragPos.current = pos; e.preventDefault() }}>⠿</span>
                   <label className="pagechip-body">
                     <input type="checkbox" checked={selectedPages.has(i)} onChange={() => togglePage(i)} />
-                    <img src={pg.dataUrl} alt="" draggable={false} />
+                    {pg.src
+                      ? <img src={pg.src} alt="" draggable={false} />
+                      : <span className="pagechip-pending" />}
                     <span>{i + 1}{fields.some((f) => f.page === i) ? ' •' : ''}</span>
                   </label>
                 </div>
@@ -712,12 +841,14 @@ export default function App() {
       )}
 
       <div className="stage">
-        <div className="pagescroll">
+        <div className="pagescroll" onScroll={onStageScroll}>
           {orderedSelection().map((i) => { const pg = pages[i]; return pg ? (
             <div key={i} className="pagewrap">
               <div className="page" data-page={i} onClick={(e) => onPageClick(e, i)}
                 style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}>
-                <img src={pg.dataUrl} alt={`Page ${i + 1}`} draggable={false} />
+                {pg.src
+                  ? <img src={pg.src} alt={`Page ${i + 1}`} draggable={false} />
+                  : <div className="pageloading" aria-label={`Page ${i + 1} is still drawing`} />}
                 {fields.some((f) => f.page === i && f.type === 'status') && (
                   <label className="manualtoggle" title="Type figures instead of tapping OK / N/A / Fail on this page"
                     onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>

@@ -172,6 +172,11 @@ export async function convertViaService(input, filename, { quality, signal } = {
     body,
     signal,
   }).catch((err) => {
+    // The user cancelling is not the converter failing. Letting an abort become
+    // a ConverterUnavailableError would send the caller down the browser
+    // fallback — the app would grind through the very conversion the user just
+    // asked it to stop.
+    if (err?.name === 'AbortError') throw err
     // The health check passed a moment ago but the request failed, so the
     // server has gone away — re-discover next time rather than staying stuck
     // on a dead endpoint.

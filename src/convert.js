@@ -5,7 +5,7 @@ import { classifyHeader, norm } from './fieldClassify.js'
 import { detectPdfFields, sniffPdfIdentity } from './pdfFields.js'
 import { extractIdentity } from './docId.js'
 import {
-  convertViaService, ConverterUnavailableError, converterRequired,
+  convertViaService, discoverConverter, ConverterUnavailableError, converterRequired,
 } from './converter.js'
 
 // A4 in CSS pixels (~96 dpi) and in PDF points.
@@ -113,6 +113,14 @@ function clampPct(v) {
   return Math.min(Math.max(v, 0), 1)
 }
 
+// The error a cancelled conversion throws. Named to match what `fetch` raises
+// on abort, so every caller can recognise a cancellation the same way.
+function abortError() {
+  const err = new Error('Conversion cancelled')
+  err.name = 'AbortError'
+  return err
+}
+
 // Convert a .docx to clean, Word-like HTML with mammoth. Underline and
 // strikethrough are kept (mammoth drops them by default) and empty paragraphs
 // are preserved so vertical spacing tracks the original; bold/italic/headings/
@@ -139,10 +147,16 @@ export async function docxToHtml(arrayBuffer) {
 // The fallback is automatic and silent unless the user has explicitly required
 // the converter. The result is treated exactly like an uploaded PDF from then
 // on, with detected fields riding along as `autoFields`.
-export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.docx' } = {}) {
+export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.docx', signal } = {}) {
   try {
+    // Confirm a converter is actually there BEFORE announcing that LibreOffice
+    // is doing the work. Announcing first meant a machine with no converter
+    // flashed "Converting with LibreOffice…" and then quietly did something
+    // else — the one message that must never be wrong is which engine ran.
+    const found = await discoverConverter()
+    if (!found.ok) throw new ConverterUnavailableError(found.reason || 'no converter available')
     onProgress?.(0, 0, { stage: 'service' })
-    const out = await convertViaService(arrayBuffer, filename)
+    const out = await convertViaService(arrayBuffer, filename, { signal })
     // Read the fields and the document number straight out of the PDF that
     // LibreOffice produced — it has real ruled boxes to align to.
     const [autoFields, identity] = await Promise.all([
@@ -183,7 +197,7 @@ export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.
 
   const html = await docxToHtml(arrayBuffer)
   const identity = extractIdentity(htmlToText(html))
-  const { bytes, autoFields } = await htmlToPdf(html, { onProgress, detectFields: true })
+  const { bytes, autoFields } = await htmlToPdf(html, { onProgress, detectFields: true, signal })
   return { bytes, autoFields, ...identity, fidelity: 'approximate' }
 }
 
@@ -210,6 +224,8 @@ ${DOCX_CSS.replace(/\.docx-holder/g, 'body')}
 // which route produced the file.
 export async function htmlToPdfBest(html, { onProgress, name = 'document' } = {}) {
   try {
+    const found = await discoverConverter()
+    if (!found.ok) throw new ConverterUnavailableError(found.reason || 'no converter available')
     onProgress?.(0, 0, { stage: 'service' })
     const doc = standaloneHtml(html)
     const out = await convertViaService(
@@ -234,7 +250,7 @@ export async function htmlToPdfBest(html, { onProgress, name = 'document' } = {}
 // and returns them as page-relative `autoFields`) and the document editor's
 // "export to PDF" (`detectFields: false`). Uses the same DOCX_CSS as the
 // on-screen editor, so the exported PDF matches what the user was editing.
-export async function htmlToPdf(html, { onProgress, detectFields = false, scale = 1.5 } = {}) {
+export async function htmlToPdf(html, { onProgress, detectFields = false, scale = 1.5, signal } = {}) {
   const holder = document.createElement('div')
   holder.className = 'docx-holder'
   Object.assign(holder.style, {
@@ -304,6 +320,10 @@ export async function htmlToPdf(html, { onProgress, detectFields = false, scale 
     const pdfDoc = await PDFDocument.create()
     for (let first = 0; first < pageCount; first += pagesPerChunk) {
       const chunkPages = Math.min(pagesPerChunk, pageCount - first)
+      // In-browser conversion of a long document is the slowest thing the app
+      // does, so it is the one that most needs to be interruptible. Check
+      // between chunks — the only point at which stopping is clean.
+      if (signal?.aborted) throw abortError()
       // Report progress and yield to the event loop so the UI can repaint —
       // otherwise a long document looks frozen even though it is converting.
       if (onProgress) onProgress(first, pageCount)
@@ -466,7 +486,7 @@ function htmlToText(html) {
 // Route any uploaded file to PDF bytes, auto-detected fields, and identity.
 // • .docx  -> converted here, fields read from the Word table structure.
 // • .pdf   -> passed through; fields read from the PDF (AcroForm or text grid).
-export async function fileToPdfBytes(file, { onProgress } = {}) {
+export async function fileToPdfBytes(file, { onProgress, signal } = {}) {
   const buf = await file.arrayBuffer()
   if (/\.pdf$/i.test(file.name)) {
     const bytes = new Uint8Array(buf)
@@ -479,7 +499,7 @@ export async function fileToPdfBytes(file, { onProgress } = {}) {
     return { bytes, autoFields, ...identity, fidelity: 'exact' }
   }
   if (/\.docx?$/i.test(file.name)) {
-    return await docxToPdf(buf, { onProgress, filename: file.name })
+    return await docxToPdf(buf, { onProgress, filename: file.name, signal })
   }
   throw new Error('Unsupported file type. Please use a PDF or Word (.docx or .doc) file.')
 }
