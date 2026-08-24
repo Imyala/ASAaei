@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { DOCX_CSS, docxToHtml, htmlToPdf } from './convert.js'
+import { DOCX_CSS, docxToHtml, htmlToPdfBest } from './convert.js'
 
 // ---------------------------------------------------------------------------
 // Document editor — a Word/Adobe-style rich editor for engineers to update the
@@ -44,6 +44,9 @@ export default function DocEditor({ initialHtml, initialName, onExit }) {
   const [name, setName] = useState(initialName || 'document')
   const [busy, setBusy] = useState('')
   const [dirty, setDirty] = useState(false)
+  // How the last PDF export was produced — 'exact' (LibreOffice, vector text)
+  // or 'approximate' (in-browser, page images).
+  const [lastExport, setLastExport] = useState('')
 
   // Apply the shared Word-like stylesheet to the on-screen page, once, so the
   // editor renders tables/headings/lists exactly as the exported PDF will
@@ -156,10 +159,18 @@ export default function DocEditor({ initialHtml, initialName, onExit }) {
   const exportPdf = async () => {
     setBusy('Building PDF…')
     try {
-      const { bytes } = await htmlToPdf(getHtml(), {
-        onProgress: (done, total) => setBusy(`Building PDF… (page ${Math.min(done + 1, total)} of ${total})`),
+      const { bytes, fidelity } = await htmlToPdfBest(getHtml(), {
+        name: name || 'document',
+        onProgress: (done, total, meta) => setBusy(
+          meta?.stage === 'service'
+            ? 'Building PDF…'
+            : `Building PDF… (page ${Math.min(done + 1, total)} of ${total})`,
+        ),
       })
       downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `${name || 'document'}.pdf`)
+      // Worth one line: an exact export has selectable text, a fallback export
+      // is a page of images, and that difference matters to whoever gets it.
+      setLastExport(fidelity === 'exact' ? 'exact' : 'approximate')
     } catch (err) {
       alert('Could not build the PDF.\n' + (err.message || err))
     } finally {
@@ -254,6 +265,15 @@ ${DOCX_CSS}
       </div>
 
       {busy && <div className="busy">{busy}</div>}
+      {!busy && lastExport && (
+        <div className={'exportnote ' + lastExport} onClick={() => setLastExport('')}>
+          {lastExport === 'exact'
+            ? '✓ PDF exported with LibreOffice — selectable text, exact layout.'
+            : '⚠ PDF exported in the browser — pages are images and the layout is approximate. '
+              + 'Start the converter for an exact PDF.'}
+          <button className="notedismiss" aria-label="Dismiss">×</button>
+        </div>
+      )}
 
       <div className="editorstage">
         <div

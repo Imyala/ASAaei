@@ -4,6 +4,9 @@ import { PDFDocument } from 'pdf-lib'
 import { classifyHeader, norm } from './fieldClassify.js'
 import { detectPdfFields, sniffPdfIdentity } from './pdfFields.js'
 import { extractIdentity } from './docId.js'
+import {
+  convertViaService, ConverterUnavailableError, converterRequired,
+} from './converter.js'
 
 // A4 in CSS pixels (~96 dpi) and in PDF points.
 const A4_W_PX = 794
@@ -123,14 +126,106 @@ export async function docxToHtml(arrayBuffer) {
   return value || ''
 }
 
-// Convert a .docx to PDF entirely in the browser (no server, works offline).
-// The result is treated exactly like an uploaded PDF from then on, and the
-// detected fields ride along as `autoFields`.
-export async function docxToPdf(arrayBuffer, { onProgress } = {}) {
+// Convert a .docx to PDF.
+//
+// Two routes, and the good one is tried first:
+//
+//   • LibreOffice, via the converter service — Word's layout reproduced exactly
+//     and a vector PDF out the other end. The fill boxes are then read from the
+//     PDF's own ruled cells (`detectPdfFields`), which is both more accurate
+//     and more complete than measuring a re-flowed HTML copy of the document.
+//   • The in-browser rasteriser — no install, fully offline, approximate.
+//
+// The fallback is automatic and silent unless the user has explicitly required
+// the converter. The result is treated exactly like an uploaded PDF from then
+// on, with detected fields riding along as `autoFields`.
+export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.docx' } = {}) {
+  try {
+    onProgress?.(0, 0, { stage: 'service' })
+    const out = await convertViaService(arrayBuffer, filename)
+    // Read the fields and the document number straight out of the PDF that
+    // LibreOffice produced — it has real ruled boxes to align to.
+    const [autoFields, identity] = await Promise.all([
+      detectPdfFields(out.bytes).catch((err) => {
+        console.warn('Field auto-detection failed on the converted PDF:', err)
+        return []
+      }),
+      sniffPdfIdentity(out.bytes).catch(() => extractIdentity('', filename)),
+    ])
+    if (!identity.docTitle) identity.docTitle = filename.replace(/\.docx?$/i, '')
+    return {
+      bytes: out.bytes,
+      autoFields,
+      ...identity,
+      fidelity: 'exact',
+      engine: out.engine,
+      convertMs: out.ms,
+      missingFonts: out.missingFonts,
+    }
+  } catch (err) {
+    if (!(err instanceof ConverterUnavailableError)) throw err
+    if (converterRequired()) {
+      throw new Error(
+        `${err.message}\n\nSettings are set to always use the converter. `
+        + 'Start it with "npm run serve", or switch conversion back to Automatic.',
+      )
+    }
+    // No converter — carry on in the browser exactly as before, except for the
+    // legacy binary .doc format, which only LibreOffice can read. Saying so is
+    // far more use than mammoth's parse error.
+    if (/\.doc$/i.test(filename)) {
+      throw new Error(
+        'Older .doc files need the converter, which is not running. '
+        + 'Start it with "npm run serve", or save the file as .docx in Word first.',
+      )
+    }
+  }
+
   const html = await docxToHtml(arrayBuffer)
   const identity = extractIdentity(htmlToText(html))
   const { bytes, autoFields } = await htmlToPdf(html, { onProgress, detectFields: true })
-  return { bytes, autoFields, ...identity }
+  return { bytes, autoFields, ...identity, fidelity: 'approximate' }
+}
+
+// Wrap the editor's HTML in a complete, standalone document that LibreOffice
+// can lay out on its own: A4 page geometry, the shared DOCX_CSS, and the same
+// base font the editor shows on screen. Without the @page rule LibreOffice
+// defaults to Letter, and the exported PDF would not match the app's A4 pages.
+function standaloneHtml(html) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@page { size: A4; margin: 15mm; }
+body { margin: 0; color: #000;
+  font: 14px "Segoe UI", Calibri, system-ui, -apple-system, sans-serif; line-height: 1.4; }
+${DOCX_CSS.replace(/\.docx-holder/g, 'body')}
+</style>
+</head><body class="docx-holder">${html || '<p></p>'}</body></html>`
+}
+
+// Turn the editor's HTML into a PDF. Uses LibreOffice when a converter is
+// reachable — the result is a vector PDF with selectable text, which is both
+// sharper and far smaller than a page of screenshots — and falls back to the
+// in-browser rasteriser otherwise. Returns `fidelity` so the caller can say
+// which route produced the file.
+export async function htmlToPdfBest(html, { onProgress, name = 'document' } = {}) {
+  try {
+    onProgress?.(0, 0, { stage: 'service' })
+    const doc = standaloneHtml(html)
+    const out = await convertViaService(
+      new TextEncoder().encode(doc), `${name}.html`)
+    return { bytes: out.bytes, fidelity: 'exact', engine: out.engine, ms: out.ms }
+  } catch (err) {
+    if (!(err instanceof ConverterUnavailableError)) throw err
+    if (converterRequired()) {
+      throw new Error(
+        `${err.message}\n\nSettings are set to always use the converter. `
+        + 'Start it with "npm run serve", or switch conversion back to Automatic.',
+      )
+    }
+  }
+  const { bytes } = await htmlToPdf(html, { onProgress })
+  return { bytes, fidelity: 'approximate' }
 }
 
 // Lay an HTML string out at A4 width, rasterise with html2canvas, slice into
@@ -381,8 +476,10 @@ export async function fileToPdfBytes(file, { onProgress } = {}) {
     ])
     // Fall back to the filename for the title if the PDF text gave us nothing.
     if (!identity.docTitle) identity.docTitle = file.name.replace(/\.pdf$/i, '')
-    return { bytes, autoFields, ...identity }
+    return { bytes, autoFields, ...identity, fidelity: 'exact' }
   }
-  if (/\.docx$/i.test(file.name)) return await docxToPdf(buf, { onProgress })
-  throw new Error('Unsupported file type. Please use a PDF or Word (.docx) file.')
+  if (/\.docx?$/i.test(file.name)) {
+    return await docxToPdf(buf, { onProgress, filename: file.name })
+  }
+  throw new Error('Unsupported file type. Please use a PDF or Word (.docx or .doc) file.')
 }

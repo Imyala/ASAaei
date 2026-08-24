@@ -1,4 +1,4 @@
-import { isStatusToken, isRemarksToken, norm } from './fieldClassify.js'
+import { isStatusToken, isStatusHeaderToken, isRemarksToken, norm } from './fieldClassify.js'
 
 // ---------------------------------------------------------------------------
 // Pure grid geometry — build cells from a line grid and turn empty cells into
@@ -132,19 +132,32 @@ export function cellHasText(c, texts) {
   return false
 }
 
+// Upper bound on fields from a single page. A real form page tops out around a
+// hundred; anything past this is a misread of a dense graphic, and placing
+// hundreds of boxes on one page would make it unusable. Applied PER PAGE so a
+// single odd page can never cost the rest of the document its fields.
+const MAX_FIELDS_PER_PAGE = 250
+
 // Turn empty cells into fields, classified by width and column header.
-export function cellsToFields(cells, texts, pw, ph, pageIndex) {
-  if (cells.length < 4) return [] // not a form grid on this page
+export function cellsToFields(rawCells, texts, pw, ph, pageIndex) {
+  if (rawCells.length < 4) return [] // not a form grid on this page
+  const cells = mergeSplitCells(rawCells, texts)
   const out = []
   const median = medianOf(cells.map((c) => c.w)) || 40
+  const headerFor = columnHeaderLookup(cells, texts)
 
-  // Header-row baselines: the printed column-title row carries a Remarks/Comments
-  // title (a word that never appears in a blank data cell). Any empty cell on that
-  // same row is a title/label box, not an input — so we skip the whole header row,
-  // including its empty label cell. (A stray OK/Fail/N/A value in a data cell is
-  // NOT used here, so a filled answer can't be mistaken for a header.)
-  const headerYs = texts.filter((t) => isRemarksToken(t.str)).map((t) => t.yTop)
-  const inHeaderRow = (c) => headerYs.some((y) => y >= c.y - 3 && y <= c.y + c.h + 3)
+  // Header-row baselines: the printed column-title row carries titles that never
+  // appear in a blank data cell — a Remarks/Comments heading, or a paired
+  // "Pass/Fail"-style status heading. Any empty cell on that same row is a
+  // title/label box, not an input, so we skip the whole header row including its
+  // empty label cell. (A lone "OK"/"Pass" *value* is deliberately not counted,
+  // so re-opening a part-filled form can't mistake its answers for headings.)
+  const headerYs = texts
+    .filter((t) => isRemarksToken(t.str) || isStatusHeaderToken(t.str))
+    .map((t) => t.yTop)
+  const onHeaderTextRow = (c) => headerYs.some((y) => y >= c.y - 3 && y <= c.y + c.h + 3)
+  const isTopCaptionCell = topCaptionTest(cells, texts)
+  const inHeaderRow = (c) => onHeaderTextRow(c) || isTopCaptionCell(c)
 
   for (const c of cells) {
     // skip cells that already contain text (labels / printed codes / values)
@@ -158,12 +171,19 @@ export function cellsToFields(cells, texts, pw, ph, pageIndex) {
     // box lower on the page (Parts Used, Comments) can't inherit "status" from
     // the frequency headers far above it.
     const narrow = c.w < Math.min(median * 0.7, pw * 0.09)
-    const headerStatus = c.w < pw * 0.16 && texts.some((t) => {
-      if (!isStatusToken(t.str) || t.yTop >= c.y) return false
+    // The heading above this column, if it marks the column as a status column.
+    // Both spellings count: a bare frequency/result token ("1M", "OK"), and a
+    // paired heading ("On Pass/Fail"), which is what the fire-and-smoke outcome
+    // tables use. Those columns are wider than the narrow test allows, so
+    // without this they became free-text boxes and the tech had to type "Pass"
+    // a hundred times instead of tapping.
+    const headerToken = c.w < pw * 0.16 && texts.find((t) => {
+      if (t.yTop >= c.y) return false
+      if (!isStatusToken(t.str) && !isStatusHeaderToken(t.str)) return false
       const tcx = (t.x + t.xr) / 2
       return tcx > c.x - 2 && tcx < c.x + c.w + 2 // header sits in this column
     })
-    let type = narrow || headerStatus ? 'status' : 'text'
+    let type = narrow || headerToken ? 'status' : 'text'
 
     // the row label sits to the left of the cell on the same row — use it as
     // the field label so profile autofill (SAP ID, name, date) still works
@@ -173,16 +193,179 @@ export function cellsToFields(cells, texts, pw, ph, pageIndex) {
 
     if (type === 'text' && /signature/i.test(rowLabel)) type = 'signature'
 
+    // Label priority: the row's own label ("SAP ID", "Site name") drives both
+    // the placeholder and profile autofill, so it wins. Failing that, use the
+    // column's printed heading — in a grid like "Test equipment | Model |
+    // Barcode no. | Calibration due date" there is no row label at all, and the
+    // heading is the only thing that tells the tech what goes in the box. A
+    // generic "Entry" is the last resort, not the default.
+    const label = type === 'status'
+      ? 'Result'
+      : (rowLabel || headerFor(c) || (type === 'signature' ? 'Signature' : 'Entry'))
+
     const pad = 1.5
     out.push({
-      type, page: pageIndex, options: [], value: type === 'signature' ? null : '', auto: true,
-      label: type === 'status' ? 'Result' : (rowLabel || (type === 'signature' ? 'Signature' : 'Entry')),
+      type, page: pageIndex,
+      // A status cell carries the wording its own column asks for, so a
+      // "Pass/Fail" column cycles Pass → N/A → Fail rather than stamping "OK"
+      // into a form that never uses the word. Empty means the default cycle.
+      options: type === 'status' ? statusCycleFor(headerToken?.str) : [],
+      value: type === 'signature' ? null : '', auto: true,
+      label,
       xPct: (c.x + pad) / pw, yPct: (c.y + pad) / ph,
       wPct: (c.w - pad * 2) / pw, hPct: (c.h - pad * 2) / ph,
     })
-    if (out.length > 800) break
+    if (out.length >= MAX_FIELDS_PER_PAGE) break
   }
   return out
+}
+
+// Re-join a cell that a stray vertical line cut in two.
+//
+// Word draws a checkbox content control as a small square inside the answer
+// cell. Its left and right edges land in the same line grid as the table's real
+// borders, so `buildCells` reconstructs the row as two cells — the 19pt square
+// and the 28pt remainder — where every other row of the same column has one
+// 47pt cell. Both halves are empty, so the tech got two boxes side by side in a
+// single tick cell.
+//
+// The tell comes from the table itself: other rows of the same column ARE a
+// single 47pt cell starting at the same x. So when two touching empty cells add
+// up to a span the table uses elsewhere, they are one cell that got cut, and we
+// put them back together.
+function mergeSplitCells(cells, texts) {
+  const bandOf = (c) => Math.round(c.y / 3) // tolerate sub-pixel row jitter
+  const bands = new Map()
+  for (const c of cells) {
+    const key = bandOf(c)
+    if (!bands.has(key)) bands.set(key, [])
+    bands.get(key).push(c)
+  }
+  // With only a couple of rows there is no other row to learn the column widths
+  // from, and a genuinely irregular little table would be mangled. Leave it be.
+  if (bands.size < 4) return cells
+
+  // Every (start, width) span the table actually uses, at 2pt resolution.
+  const spanKey = (x, w) => `${Math.round(x / 2)}:${Math.round(w / 2)}`
+  const spans = new Set()
+  for (const c of cells) spans.add(spanKey(c.x, c.w))
+  // Allow a point or two of drift at either end when matching.
+  const isKnownSpan = (x, w) => {
+    for (const dx of [-1, 0, 1]) {
+      for (const dw of [-1, 0, 1]) {
+        if (spans.has(`${Math.round(x / 2) + dx}:${Math.round(w / 2) + dw}`)) return true
+      }
+    }
+    return false
+  }
+
+  const merged = []
+  for (const list of bands.values()) {
+    const row = [...list].sort((a, b) => a.x - b.x)
+    let run = null
+    for (const c of row) {
+      const joined = run && { ...run, w: c.x + c.w - run.x }
+      const joins = run
+        && Math.abs(run.x + run.w - c.x) <= 2       // touching
+        && Math.abs(run.h - c.h) <= 3               // same row height
+        && !cellHasText(run, texts) && !cellHasText(c, texts) // both blank
+        && isKnownSpan(joined.x, joined.w)          // the column's real width
+      if (joins) { run = joined; continue }
+      if (run) merged.push(run)
+      run = c
+    }
+    if (run) merged.push(run)
+  }
+  return merged
+}
+
+// The values a status cell should tap through, taken from its column heading.
+// An empty result means "use the app's default cycle" (OK / N/A / Fail).
+function statusCycleFor(heading) {
+  return /pass/i.test(heading || '') ? ['Pass', 'N/A', 'Fail'] : []
+}
+
+// Recognise the blank cells in a table's TOP row that are there to caption the
+// row-label column rather than to be filled in.
+//
+// A grouped header ("… | GFA | FAR1 | FAR2 | Manual Control | Indication") often
+// leaves the first cell or two blank, above the row-label column. Those cells
+// carry no heading text of their own, so the header-text rule above cannot see
+// them, and they used to collect a field apiece sitting in the table's title
+// bar. The tell is positional: the cell is on the table's topmost row and the
+// rest of that row is captions.
+function topCaptionTest(cells, texts) {
+  if (!cells.length) return () => false
+  const rowKey = (c) => Math.round(c.y / 4) // tolerate sub-pixel row jitter
+  const top = Math.min(...cells.map(rowKey))
+  const topRow = cells.filter((c) => rowKey(c) === top).sort((a, b) => a.x - b.x)
+  // A caption bar spans a wide table; a two- or three-column form does not have
+  // one, and reading it as one would cost that table its first row of boxes.
+  if (topRow.length < 4) return () => false
+
+  // The blanks must be a PREFIX of the row: the empty cells above the row-label
+  // columns, with the captions filling everything to their right. That shape is
+  // what a grouped header looks like. A blank anywhere else is a value cell —
+  // "Site name | ______" is a data row, not a caption bar.
+  let lead = 0
+  while (lead < topRow.length && !cellHasText(topRow[lead], texts)) lead++
+  if (lead === 0 || lead === topRow.length) return () => false
+  if (!topRow.slice(lead).every((c) => cellHasText(c, texts))) return () => false
+  // And the captions have to outnumber the blanks they are captioning.
+  if (topRow.length - lead <= lead) return () => false
+
+  const blanks = new Set(topRow.slice(0, lead))
+  return (c) => blanks.has(c)
+}
+
+// Build a lookup from a cell to its column's printed heading.
+//
+// The heading is the nearest cell ABOVE this one that shares its column and
+// contains text. Walking the cell grid rather than guessing from loose text
+// positions keeps a caption from a different table (or a heading three tables
+// up the page) from being adopted as this column's title.
+function columnHeaderLookup(cells, texts) {
+  // Text within a cell, resolved once per cell and then reused.
+  const textCache = new Map()
+  const textIn = (c) => {
+    const key = `${Math.round(c.x)},${Math.round(c.y)}`
+    if (textCache.has(key)) return textCache.get(key)
+    const inside = texts
+      .filter((t) => {
+        const th = t.h || 9
+        const tcx = (t.x + t.xr) / 2, tcy = t.yTop - th * 0.3
+        return tcx > c.x && tcx < c.x + c.w && tcy > c.y && tcy < c.y + c.h
+      })
+      .sort((a, b) => a.yTop - b.yTop || a.x - b.x)
+      .map((t) => t.str).join(' ')
+    const val = norm(inside)
+    textCache.set(key, val)
+    return val
+  }
+
+  return (cell) => {
+    // Every cell in this column above the one we are labelling, nearest first.
+    // Blank cells are simply the empty data rows between this row and the
+    // heading, so we walk up through them — stopping at the first blank would
+    // label only the top row of a table and leave every row under it as
+    // "Entry", which is the whole problem this is here to solve.
+    const above = cells
+      .filter((other) => {
+        if (other === cell || other.y + other.h > cell.y + 2) return false
+        const overlap = Math.min(other.x + other.w, cell.x + cell.w) - Math.max(other.x, cell.x)
+        return overlap >= cell.w * 0.6 // same column
+      })
+      .sort((a, b) => b.y - a.y)
+
+    for (const candidate of above) {
+      const label = textIn(candidate)
+      if (!label) continue // an empty row between here and the heading
+      // The first text we meet going up is the column's heading. If it reads as
+      // prose rather than a caption, this is not a headed column at all.
+      return label.length <= 40 ? label : ''
+    }
+    return ''
+  }
 }
 
 // Cluster nearby coordinates into representative positions.

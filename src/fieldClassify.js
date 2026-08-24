@@ -39,3 +39,18 @@ export function isStatusToken(text) {
 export function isRemarksToken(text) {
   return RX.remarks.test(norm(text))
 }
+
+// True for a token that can ONLY be a column heading, never a filled-in value.
+//
+// The distinction matters because header rows must not receive fields. A lone
+// "Pass" or "OK" is ambiguous — it heads a column in a blank form and is an
+// answer in a completed one — but the paired forms ("Pass/Fail", "OK / Fail")
+// and the title words ("Result", "Status") are printed captions in every case.
+// Judging a header on these alone means re-opening a part-filled form cannot
+// mistake its own answers for headings.
+const RX_STATUS_HEADER =
+  /^(?:[a-z]+\s+)?(?:ok|pass)\s*\/\s*(?:fail|n\/?a)\b|^(?:result|status|condition|outcome)$/i
+
+export function isStatusHeaderToken(text) {
+  return RX_STATUS_HEADER.test(norm(text))
+}

@@ -8,6 +8,8 @@ import {
 } from './store.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
 import DocEditor from './DocEditor.jsx'
+import Settings from './Settings.jsx'
+import { discoverConverter, lastConverterStatus } from './converter.js'
 
 // Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
 // running version is identifiable when diagnosing stale caches.
@@ -28,9 +30,29 @@ const TOOL_LABEL = {
   dropdown: 'Dropdown',
   signature: 'Signature',
 }
+// What the "open a document" file pickers accept. Legacy .doc is included
+// because the LibreOffice converter reads it; without a converter running the
+// open path explains that rather than failing obscurely.
+const DOC_ACCEPT = '.pdf,.docx,.doc,application/pdf,'
+  + 'application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword'
+
 // Tri-state tap control: blank → OK → N/A → Fail → blank.
+//
+// A field may carry its own wording in `options` — a column headed "Pass/Fail"
+// taps through Pass / N/A / Fail — so the value written onto the form is the
+// one the form itself asks for. No options means this default.
 const STATUS_CYCLE = ['', 'OK', 'N/A', 'Fail']
-const nextStatus = (v) => STATUS_CYCLE[(STATUS_CYCLE.indexOf(v) + 1) % STATUS_CYCLE.length]
+const cycleFor = (f) => (f?.options?.length ? ['', ...f.options] : STATUS_CYCLE)
+const nextStatus = (v, cycle = STATUS_CYCLE) =>
+  cycle[(cycle.indexOf(v) + 1) % cycle.length]
+// CSS class for a status value: 'OK'/'Pass' read as good, 'Fail' as bad.
+const statusClass = (v) => {
+  if (!v) return 'blank'
+  const s = String(v)
+  if (/^(ok|pass)$/i.test(s)) return 'OK'
+  if (/^fail$/i.test(s)) return 'Fail'
+  return 'NA'
+}
 
 let idCounter = 1
 const nextId = () => `f${idCounter++}`
@@ -48,10 +70,18 @@ const instantiate = (fields) =>
   fields.map((f) => ({ ...f, id: nextId(), value: f.type === 'signature' ? null : '' }))
 
 export default function App() {
-  const [screen, setScreen] = useState('home') // 'home' | 'editor' | 'edit'
+  const [screen, setScreen] = useState('home') // 'home' | 'editor' | 'edit' | 'settings'
   const [editorInit, setEditorInit] = useState(null) // { html, name } for the doc editor
   const [templates, setTemplates] = useState([])
   const [online, setOnline] = useState(navigator.onLine)
+  // Whether a LibreOffice converter is reachable. Probed once in the
+  // background on load so the home screen can say which kind of conversion the
+  // next Word file will get, before the user commits to opening one.
+  const [converter, setConverter] = useState(lastConverterStatus)
+  // How the document now open was produced: 'exact' (LibreOffice / a real PDF)
+  // or 'approximate' (in-browser rasteriser).
+  const [fidelity, setFidelity] = useState('')
+  const [missingFonts, setMissingFonts] = useState([])
 
   // editor state
   const [pages, setPages] = useState([])
@@ -94,13 +124,23 @@ export default function App() {
     return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
   }, [])
 
+  // Look for a converter in the background. This never blocks anything: the app
+  // is fully usable while it runs, and a negative answer only means Word files
+  // take the in-browser path.
+  useEffect(() => { discoverConverter().then(setConverter) }, [])
+
   // ---- rendering a document into the editor -------------------------------
   const showBytesInEditor = useCallback(async (bytes, name, opts) => {
     const imgs = await renderPdfToImages(bytes, 1.5)
     setPdfBytes(bytes)
     setPages(imgs)
-    setFileName(name.replace(/\.(pdf|docx)$/i, '') || 'document')
+    setFileName(name.replace(/\.(pdf|docx?)$/i, '') || 'document')
     setNeedSource(false)
+    // How this document was produced travels with it. Setting it here, rather
+    // than at the call site, means a blank page or a reopened offline copy
+    // clears the banner instead of inheriting the last document's.
+    setFidelity(opts.fidelity || '')
+    setMissingFonts(opts.missingFonts || [])
     if (opts.fields !== undefined) setFields(opts.fields)
     if (opts.mode) setMode(opts.mode)
     if (opts.resetLock) setLocked(false)
@@ -126,7 +166,10 @@ export default function App() {
   // can't read — it never overrides good detection (which would go stale when
   // the document changes). Used by the "Fill out a document" flow.
   const openDocument = useCallback(async (bytes, name, meta = {}) => {
-    const { autoFields = [], docKey: dk = '', docTitle: dt = '' } = meta
+    const {
+      autoFields = [], docKey: dk = '', docTitle: dt = '',
+      fidelity = '', missingFonts = [],
+    } = meta
     setDocKey(dk); setDocTitle(dt)
     let fields = autoFields.map((f) => ({ ...f, id: nextId() }))
     let pages = null, applied = '', tId = null
@@ -146,6 +189,7 @@ export default function App() {
     setAppliedTemplate(applied)
     await showBytesInEditor(bytes, name, {
       fields, mode: fields.length ? 'fill' : 'design', resetLock: true, pages,
+      fidelity, missingFonts,
     })
   }, [showBytesInEditor])
 
@@ -155,23 +199,37 @@ export default function App() {
     e.target.value = ''
     if (!file) return
     const p = pendingRef.current || { action: 'new' }
-    setBusy(/\.docx$/i.test(file.name) ? 'Converting Word document…' : 'Opening document…')
+    const isWord = /\.docx?$/i.test(file.name)
+    setBusy(isWord ? 'Converting Word document…' : 'Opening document…')
     try {
-      const { bytes, autoFields = [], docKey: dk = '', docTitle: dt = '' } = await fileToPdfBytes(file, {
-        onProgress: (done, total) => setBusy(`Converting Word document… (page ${Math.min(done + 1, total)} of ${total})`),
+      const {
+        bytes, autoFields = [], docKey: dk = '', docTitle: dt = '',
+        fidelity: fid = '', missingFonts: fonts = [],
+      } = await fileToPdfBytes(file, {
+        onProgress: (done, total, meta) => setBusy(
+          // The LibreOffice route has no page-by-page progress to report — it
+          // returns the whole PDF at once, and quickly — so don't invent one.
+          meta?.stage === 'service'
+            ? 'Converting with LibreOffice…'
+            : `Converting in the browser… (page ${Math.min(done + 1, total)} of ${total})`,
+        ),
       })
+      const provenance = { fidelity: fid, missingFonts: fonts }
       if (p.action === 'new') {
         // Recognise the form and auto-apply a saved layout if we have one;
         // otherwise fall back to auto-detected fields (or a clean canvas).
-        await openDocument(bytes, file.name, { autoFields, docKey: dk, docTitle: dt })
+        await openDocument(bytes, file.name, { autoFields, docKey: dk, docTitle: dt, ...provenance })
       } else if (p.action === 'apply') {
         const tpl = await loadTemplate(p.templateId)
         setActiveTemplateId(p.templateId)
         await cacheDoc(p.templateId, file.name, bytes)
-        await showBytesInEditor(bytes, file.name, { fields: instantiate(tpl.fields), mode: 'fill', resetLock: true })
+        await showBytesInEditor(bytes, file.name, {
+          fields: instantiate(tpl.fields), mode: 'fill', resetLock: true, ...provenance,
+        })
       } else if (p.action === 'reload') {
         if (activeTemplateId) await cacheDoc(activeTemplateId, file.name, bytes)
-        await showBytesInEditor(bytes, file.name, {}) // keep existing fields/values
+        // keep existing fields/values
+        await showBytesInEditor(bytes, file.name, { ...provenance })
       }
     } catch (err) {
       alert(err.message || 'Could not open that file.')
@@ -425,41 +483,89 @@ export default function App() {
     )
   }
 
+  // ================= SETTINGS =================
+  if (screen === 'settings') {
+    return (
+      <Settings
+        profile={profile}
+        onProfile={updateProfile}
+        onExit={() => {
+          // Re-probe on the way out: the point of visiting Settings is usually
+          // to start or point at a converter, and the home chip should say so.
+          discoverConverter({ force: true }).then(setConverter)
+          setScreen('home')
+        }}
+      />
+    )
+  }
+
   // ================= HOME SCREEN =================
   if (screen === 'home') {
     return (
       <div className="home">
-        <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf" hidden onChange={onFileChosen} />
+        <input ref={fileRef} type="file" accept={DOC_ACCEPT} hidden onChange={onFileChosen} />
         <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={onImport} />
+
         <header className="homehead">
           <h1>ASAaei</h1>
-          <span className={'net ' + (online ? 'up' : 'down')}>{online ? 'Online' : 'Offline'}</span>
+          <div className="headchips">
+            <button className={'chip conv ' + (converter?.ok ? 'on' : 'off')}
+              onClick={() => setScreen('settings')}
+              title={converter?.ok
+                ? `Word documents convert with ${converter.info?.engine || 'LibreOffice'} — exact layout`
+                : 'Word documents convert in the browser — approximate layout'}>
+              {converter == null ? '… checking' : converter.ok ? '✓ Exact conversion' : '≈ Browser conversion'}
+            </button>
+            <span className={'chip net ' + (online ? 'up' : 'down')}>{online ? 'Online' : 'Offline'}</span>
+            <button className="chip settings-btn" onClick={() => setScreen('settings')}>⚙ Settings</button>
+          </div>
         </header>
-        <p className="tag">Choose an action below to get started. Works offline on iPad, tablet, and desktop.</p>
+        <p className="tag">
+          {profile.name
+            ? <>Set up for <b>{profile.name}</b>{profile.sapId ? ` (${profile.sapId})` : ''} — forms open pre-filled.</>
+            : <>Add your name and SAP ID in <button className="inlinelink" onClick={() => setScreen('settings')}>Settings</button> so forms open pre-filled.</>}
+        </p>
 
         <section className="homecard">
           <h2>Start here</h2>
           <div className="actions primary-actions">
-          <button className="big primary" onClick={() => pickFile('new')}>
-            Fill out a document
-            <small>Open a PDF or Word form and start filling boxes right away.</small>
-          </button>
-          <button className="big primary" onClick={openEditor}>
-            Edit a document
-            <small>Open or create a document and update text, formatting, and layout.</small>
-          </button>
+            <button className="big primary" onClick={() => pickFile('new')}>
+              Fill out a document
+              <small>Open a PDF or Word form and start filling boxes right away.</small>
+            </button>
+            <button className="big primary" onClick={openEditor}>
+              Edit a document
+              <small>Open or create a document and update text, formatting, and layout.</small>
+            </button>
           </div>
         </section>
 
-        <section className="profile homecard">
-          <label className="wolabel">Your details <span className="muted">— this information is filled into forms automatically (name, SAP ID, date).</span></label>
-          <div className="worow">
-            <input className="woinput" placeholder="Your name" value={profile.name || ''}
-              onChange={(e) => updateProfile({ name: e.target.value })} />
-            <input className="woinput" placeholder="SAP ID" value={profile.sapId || ''}
-              onChange={(e) => updateProfile({ sapId: e.target.value })} />
-          </div>
-        </section>
+        {templates.length > 0 && (
+          <section className="homecard">
+            <h2>Saved fill layouts</h2>
+            <p className="cardhint">
+              Field layouts you saved earlier. Pick one, then open the document to fill.
+              A form the app recognises by its document number re-applies its layout on its own.
+            </p>
+            <ul className="tpllist">
+              {templates.map((t) => (
+                <li key={t.id} className="tplrow">
+                  <button className="tplmain" onClick={() => useTemplate(t)}>
+                    <b>{t.name}</b>
+                    <small>
+                      {t.docKey ? <code>{t.docKey}</code> : 'no document number'}
+                      {' · '}{t.fieldCount ?? ''} {t.fieldCount === 1 ? 'field' : 'fields'}
+                    </small>
+                  </button>
+                  <div className="tplacts">
+                    <button onClick={() => doExport(t)} title="Save this layout as a file to share">Export</button>
+                    <button className="danger" onClick={() => removeTemplate(t)} title="Delete this layout">Delete</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <section className="homecard">
           <h2>More options</h2>
@@ -475,7 +581,7 @@ export default function App() {
 
         {busy && <div className="busy">{busy}</div>}
         <p className="hint">Open documents from your device and save finished files locally. Nothing is uploaded.</p>
-        <p className="hint" style={{ opacity: 0.6, fontSize: 12 }}>Build {BUILD_ID}</p>
+        <p className="hint faint">Build {BUILD_ID}</p>
       </div>
     )
   }
@@ -484,7 +590,7 @@ export default function App() {
   if (needSource && !pages.length) {
     return (
       <div className="home">
-        <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf" hidden onChange={onFileChosen} />
+        <input ref={fileRef} type="file" accept={DOC_ACCEPT} hidden onChange={onFileChosen} />
         <header className="homehead">
           <h1>{fileName}</h1>
           <button onClick={goHome}>Home</button>
@@ -509,7 +615,7 @@ export default function App() {
   // ================= EDITOR =================
   return (
     <div className="app">
-      <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf" hidden onChange={onFileChosen} />
+      <input ref={fileRef} type="file" accept={DOC_ACCEPT} hidden onChange={onFileChosen} />
       <header className="toolbar">
         <div className="group">
           <button className="link" onClick={goHome}>← Home</button>
@@ -553,6 +659,23 @@ export default function App() {
       {appliedTemplate && (
         <div className="applied-bar">✓ Opened ready to fill — saved layout <b>{appliedTemplate}</b> applied
           {docKey ? <> for <code>{docKey}</code></> : null}.</div>
+      )}
+      {/* A document converted in the browser looks different from the Word
+          original, and the boxes are placed from a re-flowed copy rather than
+          the document's own ruled cells. Say so once, here, rather than letting
+          it be discovered when the printed form comes out wrong. */}
+      {fidelity === 'approximate' && (
+        <div className="fidelity-bar warn">
+          ≈ Converted in the browser — the layout is approximate and the pages are images.
+          <button className="inlinelink" onClick={() => setScreen('settings')}>Set up exact conversion</button>
+        </div>
+      )}
+      {fidelity === 'exact' && missingFonts.length > 0 && (
+        <div className="fidelity-bar warn">
+          Converted exactly, but <b>{missingFonts.join(', ')}</b> {missingFonts.length === 1 ? 'is' : 'are'} not
+          installed on the converter, so some lines may wrap differently.
+          <button className="inlinelink" onClick={() => setScreen('settings')}>How to fix</button>
+        </div>
       )}
       {mode === 'design' && tool !== 'select' && (
         <div className="hintbar">Tap on the page to place a <b>{TOOL_LABEL[tool]}</b>.</div>
@@ -694,9 +817,10 @@ function FieldView({ field: f, mode, tool, locked, selected, manual, onSelect, o
             inputMode="numeric" placeholder={f.label && f.label !== 'Result' ? f.label : ''}
             onChange={(e) => onChange({ value: e.target.value })} />
         ) : (
-          <button className={'statuscell ' + (f.value ? String(f.value).replace('/', '') : 'blank')}
-            disabled={readOnly} title="Tap: OK → N/A → Fail"
-            onClick={() => onChange({ value: nextStatus(f.value) })}>
+          <button className={'statuscell ' + statusClass(f.value)}
+            disabled={readOnly}
+            title={'Tap: ' + cycleFor(f).filter(Boolean).join(' → ') + ' → blank'}
+            onClick={() => onChange({ value: nextStatus(f.value, cycleFor(f)) })}>
             {f.value || '–'}
           </button>
         )

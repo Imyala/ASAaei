@@ -162,5 +162,159 @@ console.log('signature label detection')
   ok(fields.some((f) => f.type === 'signature'), 'a "Signature" row label yields a signature field')
 }
 
+
+console.log('column headings become field labels')
+{
+  // A four-column equipment table: a printed heading row, then blank data rows.
+  // There is no row label to the left, so the heading is the only thing that can
+  // tell the tech what belongs in each box.
+  const heads = ['Test equipment', 'Model', 'Barcode no.', 'Calibration due date']
+  const xs = [60, 190, 320, 450]
+  const cells = []
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 4; c++) cells.push({ x: xs[c], y: 200 + r * 24, w: 120, h: 24 })
+  }
+  const texts = heads.map((h, i) => T(h, xs[i] + 4, xs[i] + 90, 216))
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.length === 8, `only the two blank rows get fields (got ${fields.length})`)
+  ok(fields.every((f) => f.label !== 'Entry'), 'no field falls back to the generic "Entry" label')
+  ok(fields.some((f) => f.label === 'Model'), 'a box under "Model" is labelled Model')
+  ok(fields.some((f) => f.label === 'Calibration due date'),
+    'a box under "Calibration due date" carries that heading')
+}
+
+console.log('a row label still beats the column heading')
+{
+  const cells = [
+    { x: 250, y: 300, w: 200, h: 24 },
+    { x: 250, y: 330, w: 200, h: 24 },
+    { x: 250, y: 360, w: 200, h: 24 },
+    { x: 250, y: 390, w: 200, h: 24 },
+  ]
+  // "SAP ID" to the LEFT of the second cell; a heading above the column.
+  const texts = [T('Inspection Details', 250, 340, 296), T('SAP ID', 40, 200, 346)]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  const sap = fields.find((f) => near(f.yPct, (330 + 1.5) / PH, 1e-9))
+  ok(sap && sap.label === 'SAP ID',
+    `the row label wins so profile autofill still matches (got ${sap && sap.label})`)
+}
+
+console.log('one dense page cannot starve the rest of the document')
+{
+  // 600 empty cells on a single page: the page is capped, but the cap is per
+  // page, so it returns rather than aborting a document-wide walk.
+  const cells = []
+  for (let i = 0; i < 600; i++) cells.push({ x: 60 + (i % 4) * 130, y: 100 + Math.floor(i / 4) * 2, w: 120, h: 20 })
+  const fields = cellsToFields(cells, cells.length ? [] : [], PW, PH, 3)
+  ok(fields.length > 0 && fields.length <= 250, `page capped at 250 fields (got ${fields.length})`)
+  ok(fields.every((f) => f.page === 3), 'every field stays on its own page')
+}
+
+
+console.log('a "Pass/Fail" sub-header row gets no fields')
+{
+  // Appendix D's outcomes table: a sub-header row reading
+  // "F/A I/O No. | Pass/Fail | A-1, B-1 | Pass/Fail | …" over blank data rows.
+  const xs = [60, 190, 320, 450]
+  const cells = []
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 4; c++) cells.push({ x: xs[c], y: 200 + r * 24, w: 120, h: 24 })
+  }
+  // Only two of the four header cells carry printed text; the other two are the
+  // blank cells that used to sprout a field inside the header bar.
+  const texts = [
+    T('F/A I/O No.', 64, 140, 216),
+    T('Pass/Fail', 194, 260, 216),
+    T('AHU 1', 64, 120, 240),   // row label on data row 1
+    T('AHU 2', 64, 120, 264),   // row label on data row 2
+  ]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.every((f) => f.yPct * PH > 220),
+    'nothing is placed on the Pass/Fail header row')
+  ok(fields.length === 6, `both blank data rows still fill (got ${fields.length})`)
+}
+
+console.log('blank caption cells in a grouped top header row get no fields')
+{
+  // "(blank) | (blank) | GFA | FAR1 | FAR2" — a grouped caption bar whose first
+  // two cells are empty because they sit over the row-label column.
+  const xs = [40, 140, 240, 340, 440]
+  const cells = []
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 5; c++) cells.push({ x: xs[c], y: 100 + r * 24, w: 95, h: 24 })
+  }
+  const texts = [
+    T('GFA', 244, 290, 116), T('FAR1', 344, 392, 116), T('FAR2', 444, 492, 116),
+  ]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.every((f) => f.yPct * PH > 120), 'the caption bar itself stays empty')
+  ok(fields.length === 10, `the two blank data rows still fill (got ${fields.length})`)
+}
+
+console.log('a label/value details table keeps its value boxes')
+{
+  // "Site name | ______" — the top row has ONE caption and one blank, which must
+  // NOT be read as a caption bar, or the record page loses every field.
+  const cells = []
+  for (let r = 0; r < 4; r++) {
+    cells.push({ x: 60, y: 200 + r * 24, w: 200, h: 24 })
+    cells.push({ x: 260, y: 200 + r * 24, w: 260, h: 24 })
+  }
+  const texts = [
+    T('Site name', 64, 130, 216), T('Unit No.', 64, 120, 240),
+    T('SAP ID', 64, 115, 264), T('Date inspected', 64, 160, 288),
+  ]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.length === 4, `every value cell gets a field (got ${fields.length})`)
+  ok(fields.some((f) => f.label === 'Site name'), 'the first row keeps its "Site name" label')
+}
+
+
+console.log('a checkbox outline does not split a tick cell into two boxes')
+{
+  // The F081 audit checklist: the answer column is 47pt wide on every row, but
+  // on one row Word drew a checkbox control whose edges cut it into 19 + 28.
+  // Both halves are blank, so the tech saw two tap-cells in one tick box.
+  const cells = [
+    { x: 60, y: 100, w: 99, h: 22 }, { x: 159, y: 100, w: 333, h: 22 }, { x: 495, y: 100, w: 47, h: 22 },
+    { x: 60, y: 124, w: 99, h: 22 }, { x: 159, y: 124, w: 333, h: 22 }, { x: 495, y: 124, w: 47, h: 22 },
+    // the split row
+    { x: 60, y: 148, w: 99, h: 22 }, { x: 159, y: 148, w: 333, h: 22 },
+    { x: 495, y: 148, w: 19, h: 22 }, { x: 514, y: 148, w: 28, h: 22 },
+    { x: 60, y: 172, w: 99, h: 22 }, { x: 159, y: 172, w: 333, h: 22 }, { x: 495, y: 172, w: 47, h: 22 },
+  ]
+  const texts = [
+    T('Documents', 64, 130, 116), T('Check the site holding list', 163, 330, 116),
+    T('Drawings', 64, 125, 140), T('Check drawings against the list', 163, 340, 140),
+    T('Reporting', 64, 126, 164), T('All issues must be in the site log', 163, 350, 164),
+    T('Site Manifest', 64, 140, 188), T('Notify the update team', 163, 320, 188),
+  ]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  const onSplitRow = fields.filter((f) => Math.abs(f.yPct * PH - 149.5) < 3)
+  ok(onSplitRow.length === 1, `the split tick cell yields one box, not two (got ${onSplitRow.length})`)
+  ok(onSplitRow[0] && near(onSplitRow[0].wPct * PW, 44, 0.5),
+    `the box spans the whole 47pt column (got ${onSplitRow[0] && (onSplitRow[0].wPct * PW).toFixed(1)})`)
+  ok(fields.length === 4, `one box per answer row (got ${fields.length})`)
+}
+
+console.log('genuinely distinct narrow columns are not merged away')
+{
+  // Two real side-by-side columns (a "1M" and a "3M" frequency pair) that no
+  // other row combines into a single span — these must stay two boxes.
+  const cells = []
+  for (let r = 0; r < 5; r++) {
+    cells.push({ x: 60, y: 100 + r * 24, w: 300, h: 22 })
+    cells.push({ x: 360, y: 100 + r * 24, w: 60, h: 22 })
+    cells.push({ x: 420, y: 100 + r * 24, w: 60, h: 22 })
+  }
+  const texts = [
+    T('Task', 64, 100, 116), T('1M', 364, 384, 116), T('3M', 424, 444, 116),
+    ...[1, 2, 3, 4].map((i) => T('Check item ' + i, 64, 200, 116 + i * 24)),
+  ]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.length === 8, `both frequency columns keep a box on each row (got ${fields.length})`)
+  ok(fields.every((f) => f.type === 'status'), 'they stay OK/N-A/Fail tap cells')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

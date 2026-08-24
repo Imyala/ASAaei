@@ -44,7 +44,13 @@ export async function detectPdfBoxes(bytes) {
           return { str: it.str.trim(), x: Math.min(x0, x1), xr: Math.max(x0, x1), yTop: Math.min(y0, y1), h: fs }
         })
       fields.push(...cellsToFields(cells, texts, pw, ph, p - 1))
-      if (fields.length > 800) break
+      // NOTE: no document-wide field cap here, deliberately. There used to be
+      // one ("break once we pass 800"), and on a 37-page procedure it ran out
+      // partway through page 25 — so the Appendix C inspection record on pages
+      // 26-37, the part the tech actually fills in, opened with no boxes at all
+      // and no indication anything was missing. `cellsToFields` bounds each
+      // page on its own, which contains a pathological page without ever
+      // costing the pages after it.
     }
     return fields
   } finally {

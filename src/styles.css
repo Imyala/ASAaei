@@ -253,3 +253,111 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   background: #f5f6fa; border: 1px solid var(--line); border-radius: 8px;
   padding: 10px; font-size: 12px; color: #a33; margin: 0 0 16px;
 }
+
+/* ---------- home: status chips + settings entry ---------- */
+.headchips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chip {
+  font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: #fff; color: #46506a; white-space: nowrap;
+}
+/* The conversion chip is the one status a user needs at a glance: green means
+   Word files come out identical to Word, amber means they are approximated. */
+.chip.conv.on { background: #e8f7ee; color: #1f7a44; border-color: #b6e3c8; }
+.chip.conv.off { background: #fff4e2; color: #8a5a10; border-color: #f0d7ab; }
+.chip.settings-btn { background: #fff; }
+.chip.net { border-color: currentColor; }
+.inlinelink {
+  border: none; background: none; padding: 0 2px; color: var(--blue);
+  text-decoration: underline; font: inherit; cursor: pointer;
+}
+.cardhint { color: #5a647a; font-size: 13px; line-height: 1.5; margin: 6px 0 12px; }
+.hint.faint { opacity: .6; font-size: 12px; }
+
+/* ---------- home: saved fill layouts ---------- */
+.tplrow {
+  display: flex; align-items: stretch; gap: 8px;
+  border: 1px solid var(--line); border-radius: 10px; background: #fbfcfe; overflow: hidden;
+}
+.tplmain {
+  flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  border: none; background: none; text-align: left; padding: 12px 14px; border-radius: 0;
+}
+.tplmain:hover { background: #eef2fb; }
+.tplmain b { color: #26304a; font-size: 15px; }
+.tplmain small { color: #7a8398; font-size: 12px; }
+.tplmain code { background: #e3e8f2; padding: 1px 5px; border-radius: 4px; }
+.tplacts { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 0; }
+.tplacts button { padding: 7px 11px; font-size: 13px; }
+button.danger { color: #a3323f; border-color: #eccdd1; background: #fff; }
+button.danger:hover { background: #fdf1f2; }
+
+/* ---------- settings ---------- */
+.settings .homecard { padding: 20px; }
+.fieldlabel { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 180px;
+  font-size: 13px; font-weight: 600; color: #46506a; }
+.settingfield { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; margin: 14px 0 0; }
+.settingfield legend { font-size: 13px; font-weight: 700; color: #46506a; padding: 0 6px; }
+.settinghelp { display: block; color: #6b7488; font-size: 12px; line-height: 1.5; margin-top: 8px; }
+
+/* Radio rows are big tap targets — this app is used on a tablet with gloves on. */
+.radiorow {
+  display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px;
+  border: 1px solid transparent; border-radius: 9px; cursor: pointer;
+}
+.radiorow + .radiorow { margin-top: 2px; }
+.radiorow:hover { background: #f4f7fd; }
+.radiorow.on { background: #eef3ff; border-color: #c6d6f5; }
+.radiorow input { margin-top: 3px; width: 18px; height: 18px; flex: 0 0 auto; }
+.radiorow span { display: flex; flex-direction: column; gap: 2px; }
+.radiorow b { font-size: 14px; color: #26304a; }
+.radiorow small { color: #6b7488; font-size: 12px; line-height: 1.45; }
+
+.segmented { display: flex; flex-wrap: wrap; gap: 0; }
+.segmented button { border-radius: 0; margin-left: -1px; font-size: 13px; padding: 9px 14px; }
+.segmented button:first-child { border-radius: 9px 0 0 9px; margin-left: 0; }
+.segmented button:last-child { border-radius: 0 9px 9px 0; }
+.segmented button.on { background: var(--blue-2); color: #fff; border-color: var(--blue-2); position: relative; z-index: 1; }
+
+.convstatus { border-radius: 10px; padding: 14px; font-size: 14px; }
+.convstatus.checking { background: #f4f6fa; color: #5a647a; }
+.convstatus.on { background: #f0faf4; border: 1px solid #c3e6d3; color: #1f7a44; }
+.convstatus.off { background: #fff8ec; border: 1px solid #eddcbc; color: #8a5a10; }
+.convstatus-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.convstatus-head b { flex: 1; font-size: 15px; }
+.convstatus-head button { padding: 6px 12px; font-size: 13px; }
+.convstatus p { margin: 8px 0 0; line-height: 1.5; }
+.convstatus p.muted { color: #7a8398; font-size: 13px; }
+.convfacts { margin: 10px 0 0; display: grid; gap: 4px; color: #33415c; font-size: 13px; }
+.convfacts > div { display: flex; gap: 8px; }
+.convfacts dt { flex: 0 0 82px; color: #7a8398; }
+.convfacts dd { margin: 0; }
+.convwarn {
+  margin-top: 10px; padding: 9px 11px; border-radius: 8px;
+  background: #fff4e2; color: #8a5a10; font-size: 13px; line-height: 1.5;
+}
+.convwarn code, .settinghelpbox code {
+  background: rgba(0,0,0,.07); padding: 1px 5px; border-radius: 4px; font-size: 12px;
+}
+.settinghelpbox { margin-top: 14px; font-size: 13px; color: #5a647a; line-height: 1.6; }
+.settinghelpbox summary { cursor: pointer; font-weight: 600; color: var(--blue); padding: 6px 0; }
+.settinghelpbox ol { margin: 6px 0; padding-left: 22px; }
+
+/* ---------- fidelity notices ---------- */
+.fidelity-bar {
+  padding: 7px 12px; font-size: 13px; line-height: 1.5;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.fidelity-bar.warn { background: #fff4e2; color: #8a5a10; border-bottom: 1px solid #f0d7ab; }
+.fidelity-bar .inlinelink { color: inherit; font-weight: 600; }
+.exportnote {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  font-size: 13px; line-height: 1.5; cursor: pointer;
+}
+.exportnote.exact { background: #e8f7ee; color: #1f7a44; border-bottom: 1px solid #c9e9d5; }
+.exportnote.approximate { background: #fff4e2; color: #8a5a10; border-bottom: 1px solid #f0d7ab; }
+.notedismiss { margin-left: auto; border: none; background: none; color: inherit; font-size: 18px; padding: 0 6px; }
+.convnote {
+  margin-top: 10px; padding: 9px 11px; border-radius: 8px;
+  background: #f2f5fb; color: #4a5570; font-size: 12px; line-height: 1.55;
+}
+.convnote code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; }
