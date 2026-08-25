@@ -25,7 +25,13 @@ FROM node:22-bookworm-slim
 # The fonts are not optional either. A document laid out in Calibri on a machine
 # without it re-wraps, which is a layout change — Carlito and Caladea are the
 # metric-compatible stand-ins for Calibri and Cambria, so lines break in exactly
-# the same places.
+# the same places. Measured on a real AEI procedure: 80 pages without Carlito,
+# 79 with it.
+#
+# Verdana, Segoe UI and MS Gothic have NO free metric-compatible clone, and the
+# AEI documents use all three. Mount them from a licensed Windows machine when
+# that matters:
+#   -v /path/to/windows/fonts:/usr/share/fonts/truetype/msfonts:ro
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libreoffice-writer \

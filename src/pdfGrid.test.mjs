@@ -316,5 +316,45 @@ console.log('genuinely distinct narrow columns are not merged away')
   ok(fields.every((f) => f.type === 'status'), 'they stay OK/N-A/Fail tap cells')
 }
 
+console.log('cellsToFields — things that are not boxes to write in')
+{
+  // A page needs a grid before any of this applies, so every case below sits
+  // alongside three ordinary answer cells that must survive untouched.
+  const filler = [
+    { x: 60, y: 500, w: 200, h: 20 },
+    { x: 60, y: 530, w: 200, h: 20 },
+    { x: 60, y: 560, w: 200, h: 20 },
+  ]
+  const at = (fields, x, y) =>
+    fields.some((f) => near(f.xPct * PW, x + 1.5, 0.01) && near(f.yPct * PH, y + 1.5, 0.01))
+
+  // A framed company logo on a cover page. The frame is a rectangle with
+  // nothing inside it but a picture, so by geometry alone it reads as an empty
+  // cell — this is what put a fillable field on top of the logo of a real
+  // procedure.
+  const logo = { x: 400, y: 60, w: 145, h: 55 }
+  ok(at(cellsToFields([logo, ...filler], [], PW, PH, 0), 400, 60),
+    'a framed empty rectangle is a field when nothing is drawn in it')
+  ok(!at(cellsToFields([logo, ...filler], [], PW, PH, 0, [{ x: 405, y: 64, w: 135, h: 47 }]), 400, 60),
+    'a cell filled by a picture is not a field')
+
+  // A small inline icon must not disqualify the answer box it sits beside.
+  const big = { x: 100, y: 300, w: 300, h: 40 }
+  ok(at(cellsToFields([big, ...filler], [], PW, PH, 0, [{ x: 95, y: 295, w: 20, h: 20 }]), 100, 300),
+    'a small picture in the corner leaves the box alone')
+
+  // A rule or spacer between two table borders is too short to hold a line of
+  // type, so it is not something anyone can write in.
+  ok(!at(cellsToFields([{ x: 60, y: 400, w: 480, h: 8 }, ...filler], [], PW, PH, 0), 60, 400),
+    'a cell shorter than a line of type is not a field')
+  ok(at(cellsToFields([{ x: 60, y: 400, w: 480, h: 18 }, ...filler], [], PW, PH, 0), 60, 400),
+    'a normal single-line cell still is')
+
+  // The ordinary cells are untouched throughout.
+  ok(cellsToFields(filler, [], PW, PH, 0).length === 0, 'three cells alone are not a grid')
+  ok(cellsToFields([...filler, { x: 60, y: 590, w: 200, h: 20 }], [], PW, PH, 0).length === 4,
+    'four ordinary answer cells all keep their boxes')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

@@ -61,7 +61,15 @@ carries the metric-compatible fonts so lines break where Word breaks them.
 docker run --rm asaaei node server/convert-server.mjs --check
 ```
 
-...prints whether conversion works and, if not, why.
+...prints whether conversion works and, if not, why — including which fonts are
+missing. The image carries every font that has a free metric-compatible clone;
+see **Fonts decide whether the layout matches** below for the three that do not,
+and mount them from a licensed Windows machine if your documents use them:
+
+```bash
+docker run -d -p 8787:8787 \
+  -v /path/to/windows/fonts:/usr/share/fonts/truetype/msfonts:ro asaaei
+```
 
 ### Setting it up by hand (once, on one computer)
 
@@ -121,6 +129,36 @@ The converter proves itself on start-up by converting a test document before it 
 ready. A LibreOffice that starts but cannot open documents — `libreoffice-core` installed
 without `libreoffice-writer` is the usual cause — is reported as unavailable with that reason,
 rather than accepting forms and failing every one of them.
+
+### Fonts decide whether the layout matches
+
+Measured on four real AEI procedures. With Calibri missing, AEI 3.3002 converted
+to **80 pages**; with Carlito (Calibri's metric-compatible stand-in) installed it
+converted to **79**. A missing font is not a cosmetic difference — it re-wraps
+the document and moves the page breaks.
+
+`npm run setup-fonts` covers the ones with free metric-compatible clones:
+
+| Document font | Stand-in | Widths match? |
+|---|---|---|
+| Calibri | Carlito | yes — line breaks identical |
+| Cambria | Caladea | yes |
+| Arial / Times New Roman / Courier New | Liberation Sans / Serif / Mono | yes |
+| **Verdana** | DejaVu Sans | **no — close proportions only** |
+| **Segoe UI** | Noto Sans | **no** |
+| **MS Gothic** | — | **no** |
+
+The AEI documents use Verdana and Segoe UI, and neither has a free metric clone.
+Two ways to close that gap, both legitimate:
+
+- **Run the converter on Windows.** Verdana, Segoe UI and MS Gothic are already
+  licensed and installed there, so the conversion is exact with nothing to copy.
+- **Copy the fonts from a licensed Windows machine** to a Linux converter:
+  `npm run setup-fonts -- --from-windows`. For a container, mount them read-only
+  at `/usr/share/fonts/truetype/msfonts`.
+
+`npm run check` lists what is still missing on any machine, and the app shows the
+same list in a banner above a document it converted without them.
 
 ### No converter, and the layout still has to be exact
 

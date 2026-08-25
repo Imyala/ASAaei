@@ -139,7 +139,11 @@ export function cellHasText(c, texts) {
 const MAX_FIELDS_PER_PAGE = 250
 
 // Turn empty cells into fields, classified by width and column header.
-export function cellsToFields(rawCells, texts, pw, ph, pageIndex) {
+// A box shorter than a line of type cannot be written in — it is a rule, a
+// spacer or the gap between two table borders, never an input.
+const MIN_CELL_H = 10 // points
+
+export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   if (rawCells.length < 4) return [] // not a form grid on this page
   const cells = mergeSplitCells(rawCells, texts)
   const out = []
@@ -159,11 +163,24 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex) {
   const isTopCaptionCell = topCaptionTest(cells, texts)
   const inHeaderRow = (c) => onHeaderTextRow(c) || isTopCaptionCell(c)
 
+  // A cell is "occupied" by a picture when the picture covers most of it — a
+  // framed logo, a diagram in a bordered panel. Those read as empty boxes to
+  // the line grid, because the only thing inside them is an image.
+  const holdsImage = (c) => images.some((im) => {
+    const ox = Math.min(im.x + im.w, c.x + c.w) - Math.max(im.x, c.x)
+    const oy = Math.min(im.y + im.h, c.y + c.h) - Math.max(im.y, c.y)
+    if (ox <= 0 || oy <= 0) return false
+    return (ox * oy) >= (c.w * c.h) * 0.55
+  })
+
   for (const c of cells) {
     // skip cells that already contain text (labels / printed codes / values)
     if (cellHasText(c, texts)) continue
     // skip empty cells that sit on the printed header/title row
     if (inHeaderRow(c)) continue
+    // skip what is physically not a box to write in
+    if (c.h < MIN_CELL_H) continue
+    if (holdsImage(c)) continue
 
     // status if the column is narrow, or a narrow-ish column has a status header
     // (OK/Fail or 1M/3M/6M/1Y) directly above it. The header must be a real

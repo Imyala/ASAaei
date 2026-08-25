@@ -30,7 +30,7 @@ export async function detectPdfBoxes(bytes) {
       const { width: pw, height: ph } = vp
       const toVP = (x, y) => vp.convertToViewportPoint(x, y)
       const [opList, textContent] = await Promise.all([page.getOperatorList(), page.getTextContent()])
-      const { hlines, vlines, rects } = collectGeometry(opList, toVP)
+      const { hlines, vlines, rects, images } = collectGeometry(opList, toVP)
       const cells = buildCells(hlines, vlines, rects, pw, ph)
       const texts = textContent.items
         .filter((it) => it.str && it.str.trim())
@@ -43,7 +43,7 @@ export async function detectPdfBoxes(bytes) {
           const fs = Math.hypot(tr[2], tr[3]) || Math.hypot(tr[0], tr[1]) || it.height || 9
           return { str: it.str.trim(), x: Math.min(x0, x1), xr: Math.max(x0, x1), yTop: Math.min(y0, y1), h: fs }
         })
-      fields.push(...cellsToFields(cells, texts, pw, ph, p - 1))
+      fields.push(...cellsToFields(cells, texts, pw, ph, p - 1, images))
       // NOTE: no document-wide field cap here, deliberately. There used to be
       // one ("break once we pass 800"), and on a 37-page procedure it ran out
       // partway through page 25 — so the Appendix C inspection record on pages
@@ -67,6 +67,11 @@ function collectGeometry(opList, toVP) {
   const hlines = [] // { y, x1, x2 }
   const vlines = [] // { x, y1, y2 }
   const rects = []  // { x, y, w, h } top-origin
+  // Where pictures are drawn. A framed logo is a rectangle with nothing but an
+  // image inside it, which is indistinguishable from an empty box by geometry
+  // alone — on the cover page of a real procedure that put a fillable field on
+  // top of the company logo.
+  const images = [] // { x, y, w, h } top-origin
   let ctm = [1, 0, 0, 1, 0, 0]
   const stack = []
   const toTop = (pt) => toVP(pt[0], pt[1])
@@ -87,9 +92,21 @@ function collectGeometry(opList, toVP) {
     addSeg(rx, ry, rx, ry + rh); addSeg(rx + rw, ry, rx + rw, ry + rh)
   }
 
+  // An image is painted through the CTM as the unit square, so the current
+  // transform is its placed rectangle.
+  const addImage = () => {
+    const p1 = toTop(Util.applyTransform([0, 0], ctm))
+    const p2 = toTop(Util.applyTransform([1, 1], ctm))
+    const x = Math.min(p1[0], p2[0]), y = Math.min(p1[1], p2[1])
+    const w = Math.abs(p2[0] - p1[0]), h = Math.abs(p2[1] - p1[1])
+    if (w > 2 && h > 2) images.push({ x, y, w, h })
+  }
+
   for (let i = 0; i < fnArray.length; i++) {
     const fn = fnArray[i]
-    if (fn === OPS.save) stack.push(ctm)
+    if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject
+        || fn === OPS.paintImageMaskXObject || fn === OPS.paintJpegXObject) addImage()
+    else if (fn === OPS.save) stack.push(ctm)
     else if (fn === OPS.restore) ctm = stack.pop() || ctm
     else if (fn === OPS.transform) ctm = Util.transform(ctm, argsArray[i])
     else if (fn === OPS.constructPath) {
@@ -108,5 +125,5 @@ function collectGeometry(opList, toVP) {
       }
     }
   }
-  return { hlines, vlines, rects }
+  return { hlines, vlines, rects, images }
 }
