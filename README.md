@@ -58,6 +58,28 @@ Open one of those addresses on an iPad or another PC and **the app finds the con
 it is served from the same address, so there is nothing to configure. The home screen shows
 **Exact Word conversion** when it is working.
 
+> **Open the app from that address, not from the hosted copy.** A page served over `https://`
+> (the GitHub Pages build) is not allowed by the browser to call a plain `http://` address on
+> your network, so the hosted app cannot see a converter running on another machine — it will
+> report that there is no converter no matter what you type into *Converter address*. Loading
+> the app from `http://<the converter's address>:8787` puts the app and the converter on one
+> address and the restriction does not apply. A converter on the *same* machine as the browser
+> can be reached from the hosted app, though Chrome may first ask whether the site may reach
+> devices on your local network — allow it.
+
+The converter proves itself on start-up by converting a test document before it reports as
+ready. A LibreOffice that starts but cannot open documents — `libreoffice-core` installed
+without `libreoffice-writer` is the usual cause — is reported as unavailable with that reason,
+rather than accepting forms and failing every one of them.
+
+### No converter, and the layout still has to be exact
+
+Save the PDF from Word itself: **File → Save as → PDF**, then open that PDF here. It is Word's
+own rendering, so the layout is exact and the text stays selectable, and the app fills PDFs
+without converting anything. ASAaei suggests this itself when a Word file is opened with no
+converter available — it asks before falling back, rather than quietly rebuilding a controlled
+document at approximate geometry.
+
 > `python3-uno` is what makes it fast. It lets the server keep LibreOffice warm and hand it
 > documents over a socket, instead of starting LibreOffice from scratch for every file (which costs
 > about 1.5 s each time). Without it the converter still works, just slower.

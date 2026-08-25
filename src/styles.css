@@ -386,6 +386,12 @@ button.danger:hover { background: #fdf1f2; }
 .convstatus-head button { padding: 6px 12px; font-size: 13px; }
 .convstatus p { margin: 8px 0 0; line-height: 1.5; }
 .convstatus p.muted { color: #7a8398; font-size: 13px; }
+/* The actionable half of a "no converter" verdict — the sentence that tells
+   someone what to do next, so it should not read as more explanation. */
+.convfix {
+  background: rgba(255,255,255,.75); border-left: 3px solid #d79b3a;
+  border-radius: 0 8px 8px 0; padding: 9px 12px; font-size: 13.5px; line-height: 1.55;
+}
 .convfacts { margin: 10px 0 0; display: grid; gap: 4px; color: #33415c; font-size: 13px; }
 .convfacts > div { display: flex; gap: 8px; }
 .convfacts dt { flex: 0 0 82px; color: #7a8398; }
@@ -457,6 +463,22 @@ button.danger:hover { background: #fdf1f2; }
   text-align: left; white-space: pre-wrap; margin: 0 0 18px;
 }
 .openingactions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* ---------- "this would lose its layout" ---------- */
+.approxcard { text-align: left; max-width: 640px; margin-left: auto; margin-right: auto; }
+.openingtitle.warn { color: #8a5a10; }
+.approxcard .openingname { text-align: left; }
+.approxbody { color: #4d566d; font-size: 14.5px; line-height: 1.6; margin: 0 0 18px; }
+.approxroute {
+  border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;
+  background: #f8fbff;
+}
+.approxroute.muted { background: #fbfcfe; }
+.approxroute b { color: #26314c; font-size: 15px; }
+.approxroute p { color: #5a647a; font-size: 13.5px; line-height: 1.6; margin: 6px 0 12px; }
+.approxroute .big { align-items: center; padding: 12px 18px; }
+.approxactions { justify-content: space-between; margin-top: 16px; }
+.approxanyway { color: #7a8398; font-size: 13px; }
 .openingactions .big { align-items: center; padding: 12px 20px; }
 .openingcancel {
   margin-top: 20px; padding: 8px 20px; font-size: 14px;

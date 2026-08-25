@@ -86,16 +86,50 @@ let discovering = null
 const resolveBase = (candidate) =>
   candidate || (typeof location !== 'undefined' ? location.origin : '')
 
+// A page served over https cannot call a plain-http address on the network:
+// the browser blocks it as mixed content before the request is made. localhost
+// is the exception — browsers treat it as trustworthy — so a converter on this
+// same machine is still reachable, subject to the local-network permission
+// below. Detecting this up front is what lets the app say *why* it found
+// nothing instead of shrugging.
+const HTTPS_PAGE = typeof location !== 'undefined' && location.protocol === 'https:'
+const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i
+const isBlockedFromThisPage = (base) =>
+  HTTPS_PAGE && /^http:\/\//i.test(base) && !LOOPBACK.test(base)
+
+// Probe one candidate. Returns null when there is nothing there at all, and a
+// result object otherwise — including for a converter that answers but cannot
+// convert, because "LibreOffice is running but has no Writer filters" is worth
+// saying out loud rather than reporting as silence.
 async function probe(candidate, timeoutMs = 2500) {
   const base = resolveBase(candidate)
   if (!base) return null
+  if (isBlockedFromThisPage(base)) {
+    return {
+      ok: false,
+      base,
+      blocked: 'mixed-content',
+      reason: `This page is served over https, so the browser will not let it reach ${base}.`,
+    }
+  }
   try {
     const res = await fetchWithTimeout(`${base}/api/health`, { method: 'GET' }, timeoutMs)
     if (!res.ok) return null
     const info = await res.json()
-    // Guard against a same-origin host that answers /api/health with something
-    // else entirely (a proxy, a different app) — only our server counts.
-    if (info.app !== 'asaaei-converter' || !info.ok) return null
+    // Guard against a host that answers /api/health with something else
+    // entirely (a proxy, a different app) — only our server counts.
+    if (info.app !== 'asaaei-converter') return null
+    if (!info.ok) {
+      // Reached it, and it told us it cannot convert. Carry its own reason.
+      return {
+        ok: false,
+        base,
+        info,
+        reason: info.error
+          ? `The converter at ${base} is running, but ${info.error}`
+          : `The converter at ${base} is running but is not ready to convert.`,
+      }
+    }
     return { ok: true, base, info }
   } catch {
     return null
@@ -119,23 +153,50 @@ export function discoverConverter({ force = false } = {}) {
       ? [settings.url.replace(/\/+$/, ''), ...AUTO_CANDIDATES]
       : AUTO_CANDIDATES
 
+    // The best answer we got from anything that responded. A converter that is
+    // running but broken beats "nothing answered" as an explanation.
+    let nearMiss = null
     for (const candidate of candidates) {
       // A URL the user typed deserves longer than an automatic guess: it may be
       // another machine on the office network, a hop or two away.
       const found = await probe(candidate, candidate === settings.url ? 6000 : 2500)
-      if (found) { discovered = found; return found }
+      if (found?.ok) { discovered = found; return found }
+      if (found && !nearMiss) nearMiss = found
     }
 
-    discovered = {
+    discovered = nearMiss ? { ...nearMiss, fix: fixFor(nearMiss) } : {
       ok: false,
       reason: settings.url
         ? `No converter answered at ${settings.url}.`
-        : 'No converter found on this device or network.',
+        : 'No converter is running on this device, or this page cannot reach it.',
+      fix: fixFor(null),
     }
     return discovered
   })().finally(() => { discovering = null })
 
   return discovering
+}
+
+// What to actually do about it. Every branch ends with something the person
+// reading it can carry out — the old message ("No converter found on this
+// device or network.") was true and useless.
+function fixFor(nearMiss) {
+  if (nearMiss?.blocked === 'mixed-content') {
+    return `Open the app from the converter itself — type ${nearMiss.base} into the browser `
+      + 'instead of using this address. Served from there, the app and the converter share '
+      + 'one address and the browser stops blocking them.'
+  }
+  if (nearMiss?.info && !nearMiss.info.ok) {
+    return 'Fix the converter on the machine running it, then press Check again.'
+  }
+  if (HTTPS_PAGE) {
+    return 'Start it on this machine with "npm run serve", then reload. If the browser asks '
+      + 'whether this site may reach devices on your local network, allow it. A converter on '
+      + 'another machine cannot be reached from this address at all — open the app from that '
+      + "machine's own address (http://its-ip:8787) instead."
+  }
+  return 'Start it with "npm run serve" on the machine that has LibreOffice, then press Check '
+    + 'again. On a tablet, put that machine\'s address in Converter address below.'
 }
 
 // What the UI shows without triggering a probe of its own.

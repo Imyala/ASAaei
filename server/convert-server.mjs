@@ -62,13 +62,23 @@ const MIME = {
 // running the hosted PWA against an office machine's converter), so the API is
 // CORS-open. It only ever converts a document the caller supplied and hands it
 // straight back — there is no account, no stored data and nothing to read.
-function cors(res) {
+function cors(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename, X-Quality')
   res.setHeader('Access-Control-Expose-Headers',
     'X-Convert-Ms, X-Convert-Cached, X-Convert-Engine, X-Convert-Pages, X-Convert-Missing-Fonts')
   res.setHeader('Access-Control-Max-Age', '86400')
+  // Private Network Access. The hosted app runs on a public origin
+  // (https://…github.io) while this server lives on localhost or the office
+  // LAN — a "private" address. Chrome sends a preflight carrying
+  // Access-Control-Request-Private-Network for exactly that hop and drops the
+  // request unless the server agrees to it. Without this header the app's
+  // health probe fails before it ever reaches us, and the app reports that
+  // there is no converter on a machine where the converter is running.
+  if (req.headers['access-control-request-private-network'] === 'true') {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true')
+  }
 }
 
 const sendJson = (res, code, body) => {
@@ -82,7 +92,7 @@ const sendJson = (res, code, body) => {
 }
 
 const server = http.createServer(async (req, res) => {
-  cors(res)
+  cors(req, res)
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)

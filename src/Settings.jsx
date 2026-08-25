@@ -26,7 +26,7 @@ export default function Settings({ onExit, profile, onProfile }) {
       const found = await discoverConverter({ force: true })
       setStatus(found.ok
         ? { ok: true, base: found.base || 'this device', ...found.info }
-        : { ok: false, reason: found.reason })
+        : { ok: false, reason: found.reason, fix: found.fix })
     } finally {
       setChecking(false)
     }
@@ -169,9 +169,12 @@ function ConverterStatus({ status, checking, onRetest }) {
           </button>
         </div>
         <p>{status.reason}</p>
+        {status.fix && <p className="convfix">{status.fix}</p>}
         <p className="muted">
-          Word documents still convert — the layout is approximate and the PDF pages are
-          images rather than text.
+          Until then, Word documents open with an approximate layout. For a document whose
+          layout matters, open it in Word and use <b>File → Save as → PDF</b>, then open that
+          PDF here: Word's own PDF is exact, and this app fills PDFs without converting
+          anything.
         </p>
       </div>
     )

@@ -6,7 +6,7 @@ import { loadTemplate, saveTemplate, findTemplateByDocKey } from './store.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
 import DocEditor from './DocEditor.jsx'
 import Settings from './Settings.jsx'
-import { discoverConverter, lastConverterStatus } from './converter.js'
+import { discoverConverter, getConverterSettings, lastConverterStatus } from './converter.js'
 
 // Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
 // running version is identifiable when diagnosing stale caches.
@@ -81,6 +81,9 @@ export default function App() {
   // The document currently being opened: { name, stage, detail, progress,
   // cancel, error }. Non-null means the opening screen is what to show.
   const [opening, setOpening] = useState(null)
+  // A Word document waiting on the "this will lose its layout" answer:
+  // { file, reason, fix }.
+  const [approxAsk, setApproxAsk] = useState(null)
 
   // editor state
   const [pages, setPages] = useState([])
@@ -113,6 +116,9 @@ export default function App() {
   const renderRef = useRef(null)
   // Lets the opening screen's Cancel actually stop the work in flight.
   const openJobRef = useRef(null)
+  // Set once the user has accepted an approximate layout, so the warning is a
+  // decision rather than a nag on every file for the rest of the session.
+  const approxOkRef = useRef(false)
 
   const selected = fields.find((f) => f.id === selectedId) || null
 
@@ -208,11 +214,32 @@ export default function App() {
     })
   }, [showBytesInEditor])
 
-  // ---- file chosen (new design / reload / apply template) -----------------
+  // ---- file chosen (new design / reload) ----------------------------------
   const onFileChosen = async (e) => {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+
+    // A Word document with no converter to hand would be rebuilt from scratch
+    // and photographed: the text survives, the layout does not — column widths,
+    // ruled cells and spacing all shift. On a controlled document that is not a
+    // cosmetic difference, so say so BEFORE doing it, and point at the two ways
+    // to keep the layout exactly. Only 'auto' asks: 'browser' is a deliberate
+    // choice already made, and 'service' refuses outright further down.
+    if (/\.docx?$/i.test(file.name) && !approxOkRef.current
+        && getConverterSettings().mode === 'auto') {
+      const found = await discoverConverter()
+      setConverter(found)
+      if (!found.ok) {
+        setApproxAsk({ file, reason: found.reason, fix: found.fix })
+        setScreen('approx')
+        return
+      }
+    }
+    beginOpen(file)
+  }
+
+  const beginOpen = async (file) => {
     const p = pendingRef.current || { action: 'new' }
     const isWord = /\.docx?$/i.test(file.name)
 
@@ -528,6 +555,59 @@ export default function App() {
     )
   }
 
+  // ================= WORD FILE, NO EXACT CONVERSION =================
+  // The one screen in the app that stops the user rather than getting on with
+  // it. Filling in a form whose ruled table has quietly moved is worse than
+  // waiting a minute to do it properly, and both proper routes are quick.
+  if (screen === 'approx' && approxAsk) {
+    return (
+      <div className="home openingscreen">
+        <input ref={fileRef} type="file" accept={DOC_ACCEPT} hidden onChange={onFileChosen} />
+        <header className="homehead">
+          <h1>ASAaei</h1>
+        </header>
+        <section className="homecard openingcard approxcard">
+          <h2 className="openingtitle warn">This Word file would lose its layout</h2>
+          <p className="openingname">{approxAsk.name || approxAsk.file.name}</p>
+          <p className="approxbody">
+            Exact conversion is not available here, so the app would rebuild the document from
+            scratch and photograph the result. The words survive; column widths, ruled cells,
+            headers and spacing shift. On a controlled document that is not a cosmetic
+            difference.
+          </p>
+
+          <div className="approxroute">
+            <b>Keep the layout exactly — no setup</b>
+            <p>
+              Open the file in Word, choose <b>File → Save as</b> and pick <b>PDF</b>. Open that
+              PDF here. It is Word's own rendering, so the layout is exact, the text stays
+              selectable, and the fill boxes land in the real ruled cells.
+            </p>
+            <button className="big primary" onClick={() => { setApproxAsk(null); pickFile('new') }}>
+              Choose the PDF instead
+            </button>
+          </div>
+
+          <div className="approxroute muted">
+            <b>Or set up exact conversion for every Word file</b>
+            <p>{approxAsk.reason}{approxAsk.fix ? ` ${approxAsk.fix}` : ''}</p>
+            <button onClick={() => { setApproxAsk(null); setScreen('settings') }}>
+              Open conversion settings
+            </button>
+          </div>
+
+          <div className="openingactions approxactions">
+            <button onClick={() => { setApproxAsk(null); setScreen('home') }}>Cancel</button>
+            <button className="approxanyway"
+              onClick={() => { approxOkRef.current = true; const f = approxAsk.file; setApproxAsk(null); beginOpen(f) }}>
+              Open anyway with an approximate layout
+            </button>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   // ================= SETTINGS =================
   if (screen === 'settings') {
     return (
@@ -691,6 +771,7 @@ export default function App() {
       {fidelity === 'approximate' && (
         <div className="fidelity-bar warn">
           ≈ Converted in the browser — the layout is approximate and the pages are images.
+          For an exact layout, save the Word file as a PDF from Word and open that instead.
           <button className="inlinelink" onClick={() => setScreen('settings')}>Set up exact conversion</button>
         </div>
       )}

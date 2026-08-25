@@ -448,6 +448,48 @@ export class ConverterPool {
         this.engines.push(e)
       }
     }
+
+    await this.selfTest()
+  }
+
+  // Prove the installation can actually produce a PDF before telling the app
+  // that exact conversion is on.
+  //
+  // `soffice --version` answering is not proof: a core-only install
+  // (libreoffice-core without libreoffice-writer) starts, reports a version and
+  // accepts UNO connections, then fails every document with "type detection
+  // failed" because it has no Writer filters at all. Reporting that as a
+  // healthy converter is worse than reporting none — the app says "exact
+  // conversion" while quietly rasterising every form it is given, which is how
+  // a document silently loses its layout.
+  async selfTest() {
+    if (!this.available) return
+    if (process.env.ASAAEI_SKIP_SELFTEST === '1') {
+      this.onLog('conversion self-test skipped (ASAAEI_SKIP_SELFTEST=1)')
+      return
+    }
+    const sample = Buffer.from('ASAaei converter self-test.\n', 'utf8')
+    try {
+      const { bytes } = await this.convert(sample, 'selftest.txt', { quality: 'fast' })
+      if (!bytes || bytes.subarray(0, 4).toString('latin1') !== '%PDF') {
+        throw new Error('the output was not a PDF')
+      }
+      // Don't let the self-test occupy a cache slot meant for real forms.
+      this.cache.clear()
+      this.stats = { converted: 0, cacheHits: 0, failures: 0, totalMs: 0 }
+    } catch (err) {
+      this.cache.clear()
+      this.stats = { converted: 0, cacheHits: 0, failures: 0, totalMs: 0 }
+      this.engines.forEach((e) => e.stop())
+      this.engines = []
+      this.mode = 'unavailable'
+      this.error = /type detection failed|could not be loaded/i.test(err.message || '')
+        ? 'LibreOffice is installed but has no Writer document filters, so it cannot open '
+          + 'Word files. Install the Writer package (Debian/Ubuntu: libreoffice-writer; '
+          + 'the full "libreoffice" package includes it).'
+        : `LibreOffice could not convert a test document: ${err.message}`
+      this.onLog(`conversion self-test FAILED — ${this.error}`)
+    }
   }
 
   get available() { return this.mode === 'uno' || this.mode === 'cli' }
