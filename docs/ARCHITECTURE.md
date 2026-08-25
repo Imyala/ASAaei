@@ -134,7 +134,7 @@ get closest-proportion stand-ins and an honest warning.
   - `convert.js` — the two conversion routes, shared `DOCX_CSS`, `fileToPdfBytes`
   - `Settings.jsx` — converter status/options and the user's profile
   - `DocEditor.jsx` — the document editor (toolbar + contentEditable + PDF/HTML export)
-  - `App.jsx` — home screen, the fill editor, page picker, saved layouts
+  - `App.jsx` — home screen, the fill editor, page picker, fill layouts
   - `bake.js` — draw field values onto the PDF and flatten
   - `pdfFields.js` / `pdfBoxes.js` / `pdfGrid.js` — PDF field/box detection
   - `pdfRender.js` — progressive page rendering (geometry first, images behind)

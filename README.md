@@ -56,7 +56,7 @@ npm run serve
 
 Open one of those addresses on an iPad or another PC and **the app finds the converter by itself** —
 it is served from the same address, so there is nothing to configure. The home screen shows
-**✓ Exact conversion** when it is working.
+**Exact Word conversion** when it is working.
 
 > `python3-uno` is what makes it fast. It lets the server keep LibreOffice warm and hand it
 > documents over a socket, instead of starting LibreOffice from scratch for every file (which costs
@@ -116,9 +116,9 @@ npm test                 # unit tests
 - **Profile autofill:** set your name + SAP ID once in Settings; every form opens with your name,
   SAP ID and today's date already filled in.
 - **Page picker:** keep only the pages you fill, and drag to reorder.
-- **Save as a fill layout:** store a form's field layout and reuse it — the saved layouts are
-  listed on the home screen. They export/import as files, and the app re-applies a saved layout
-  automatically when it recognises the form's document number.
+- **Save as a fill layout:** store a form's field layout for a form the detector can't read. There
+  is nothing to pick from — the app re-applies a saved layout on its own when it recognises the
+  form's document number.
 - **Finalize & lock:** flattens the fields so the document can no longer be edited — only further
   signatures may be added.
 - **Save PDF:** exports a flattened PDF, keeping the text selectable when the converter produced it.

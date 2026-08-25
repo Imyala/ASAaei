@@ -1,11 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { startPdfRender, revokePageImages } from './pdfRender.js'
-import { bakePdf, makeBlankPdf } from './bake.js'
+import { bakePdf } from './bake.js'
 import { fileToPdfBytes } from './convert.js'
-import {
-  listTemplates, loadTemplate, saveTemplate, deleteTemplate,
-  cacheDoc, getCachedDoc, exportTemplate, importTemplateJson, findTemplateByDocKey,
-} from './store.js'
+import { loadTemplate, saveTemplate, findTemplateByDocKey } from './store.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
 import DocEditor from './DocEditor.jsx'
 import Settings from './Settings.jsx'
@@ -72,7 +69,6 @@ const instantiate = (fields) =>
 export default function App() {
   const [screen, setScreen] = useState('home') // 'home' | 'editor' | 'edit' | 'settings'
   const [editorInit, setEditorInit] = useState(null) // { html, name } for the doc editor
-  const [templates, setTemplates] = useState([])
   const [online, setOnline] = useState(navigator.onLine)
   // Whether a LibreOffice converter is reachable. Probed once in the
   // background on load so the home screen can say which kind of conversion the
@@ -96,9 +92,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null)
   const [locked, setLocked] = useState(false)
   const [busy, setBusy] = useState('')
-  const [activeTemplateId, setActiveTemplateId] = useState(null)
-  const [needSource, setNeedSource] = useState(false) // template chosen, waiting for document
-  const [cachedDoc, setCachedDoc] = useState(null)
   const [docKey, setDocKey] = useState('')
   const [docTitle, setDocTitle] = useState('')
   const [appliedTemplate, setAppliedTemplate] = useState('') // name of an auto-applied layout
@@ -113,8 +106,7 @@ export default function App() {
   }
 
   const fileRef = useRef(null)
-  const importRef = useRef(null)
-  const pendingRef = useRef(null) // { action, templateId }
+  const pendingRef = useRef(null) // { action }
   const dragRef = useRef(null)
   // The in-flight page render, so opening another document can stop it and
   // reclaim its images rather than leaving them drawing into nothing.
@@ -124,8 +116,6 @@ export default function App() {
 
   const selected = fields.find((f) => f.id === selectedId) || null
 
-  const refreshTemplates = useCallback(async () => setTemplates(await listTemplates()), [])
-  useEffect(() => { refreshTemplates() }, [refreshTemplates])
   useEffect(() => {
     const on = () => setOnline(true), off = () => setOnline(false)
     window.addEventListener('online', on); window.addEventListener('offline', off)
@@ -163,7 +153,6 @@ export default function App() {
     const imgs = render.sizes
     setPdfBytes(bytes)
     setFileName(name.replace(/\.(pdf|docx?)$/i, '') || 'document')
-    setNeedSource(false)
     // How this document was produced travels with it. Setting it here, rather
     // than at the call site, means a blank page or a reopened offline copy
     // clears the banner instead of inheriting the last document's.
@@ -200,20 +189,18 @@ export default function App() {
     } = meta
     setDocKey(dk); setDocTitle(dt)
     let fields = autoFields.map((f) => ({ ...f, id: nextId() }))
-    let pages = null, applied = '', tId = null
+    let pages = null, applied = ''
     if (fields.length === 0) {
       const match = await findTemplateByDocKey(dk)
       if (match) {
         const tpl = await loadTemplate(match.id)
         fields = instantiate(tpl.fields)
         pages = tpl.pages && tpl.pages.length ? tpl.pages : null
-        applied = match.name; tId = match.id
-        await cacheDoc(match.id, name, bytes)
+        applied = match.name
       }
     }
     // Fill the tech's own recurring fields (name, SAP ID, date) up front.
     fields = applyProfile(fields, getProfile())
-    setActiveTemplateId(tId)
     setAppliedTemplate(applied)
     await showBytesInEditor(bytes, name, {
       fields, mode: fields.length ? 'fill' : 'design', resetLock: true, pages,
@@ -271,15 +258,7 @@ export default function App() {
         // Recognise the form and auto-apply a saved layout if we have one;
         // otherwise fall back to auto-detected fields (or a clean canvas).
         await openDocument(bytes, file.name, { autoFields, docKey: dk, docTitle: dt, ...provenance })
-      } else if (p.action === 'apply') {
-        const tpl = await loadTemplate(p.templateId)
-        setActiveTemplateId(p.templateId)
-        await cacheDoc(p.templateId, file.name, bytes)
-        await showBytesInEditor(bytes, file.name, {
-          fields: instantiate(tpl.fields), mode: 'fill', resetLock: true, ...provenance,
-        })
       } else if (p.action === 'reload') {
-        if (activeTemplateId) await cacheDoc(activeTemplateId, file.name, bytes)
         // keep existing fields/values
         await showBytesInEditor(bytes, file.name, { ...provenance })
       }
@@ -304,42 +283,9 @@ export default function App() {
     setOpening(null)
   }
 
-  const pickFile = (action, templateId) => {
-    pendingRef.current = { action, templateId }
+  const pickFile = (action) => {
+    pendingRef.current = { action }
     fileRef.current?.click()
-  }
-
-  // ---- home actions -------------------------------------------------------
-  const startBlank = async () => {
-    setActiveTemplateId(null)
-    setBusy('Preparing…')
-    try {
-      await showBytesInEditor(await makeBlankPdf(), 'blank-form', { fields: [], mode: 'design', resetLock: true })
-    } finally { setBusy('') }
-  }
-
-  const useTemplate = async (t) => {
-    const cache = await getCachedDoc(t.id)
-    setActiveTemplateId(t.id)
-    setCachedDoc(cache || null)
-    setPages([])
-    setNeedSource(true)
-    setScreen('editor')
-    pendingRef.current = { action: 'apply', templateId: t.id }
-    setFileName(t.name)
-    // preload the template so "use offline copy" works too
-    const tpl = await loadTemplate(t.id)
-    pendingRef.current.tpl = tpl
-  }
-
-  const useOfflineCopy = async () => {
-    const p = pendingRef.current
-    const cache = await getCachedDoc(p.templateId)
-    const tpl = await loadTemplate(p.templateId)
-    setBusy('Opening offline copy…')
-    try {
-      await showBytesInEditor(cache.bytes, cache.name, { fields: instantiate(tpl.fields), mode: 'fill', resetLock: true })
-    } finally { setBusy('') }
   }
 
   // ---- document editor ----------------------------------------------------
@@ -350,45 +296,17 @@ export default function App() {
     setScreen('edit')
   }
 
-  const onImport = async (e) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    try {
-      await importTemplateJson(await file.text())
-      await refreshTemplates()
-    } catch (err) { alert(err.message) }
-  }
-
-  const doExport = async (t) => {
-    const tpl = await loadTemplate(t.id)
-    const blob = new Blob([exportTemplate(tpl)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `${t.name.replace(/\s+/g, '-')}.template.json`; a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const removeTemplate = async (t) => {
-    if (window.confirm(`Delete template “${t.name}”? This cannot be undone.`)) {
-      await deleteTemplate(t.id); await refreshTemplates()
-    }
-  }
-
   const saveAsTemplate = async () => {
     if (!fields.length) { alert('Add some fields first.'); return }
     const name = window.prompt('Name this form template (e.g. “Pump Inspection Sheet”):', docTitle || fileName)
     if (!name) return
-    const tpl = await saveTemplate(name.trim(), fields, {
+    await saveTemplate(name.trim(), fields, {
       docKey, docTitle, pages: [...selectedPages].sort((a, b) => a - b),
     })
-    setActiveTemplateId(tpl.id)
     setAppliedTemplate(name.trim())
-    if (pdfBytes) await cacheDoc(tpl.id, fileName + '.pdf', pdfBytes)
-    await refreshTemplates()
     alert(docKey
       ? `Saved “${name}”. Next time you open ${docKey} it will open ready to fill.`
-      : `Saved “${name}”. You can now reuse it from the home screen.`)
+      : `Saved “${name}”. It will be re-applied to a form this one can be recognised by.`)
   }
 
   // ---- placing / editing fields (design mode) -----------------------------
@@ -499,9 +417,9 @@ export default function App() {
     renderRef.current?.cancel()
     renderRef.current = null
     setPages((old) => { revokePageImages(old); return [] })
-    setScreen('home'); setFields([]); setPageOrder([]); setNeedSource(false)
+    setScreen('home'); setFields([]); setPageOrder([])
     setAppliedTemplate(''); setDocKey(''); setDocTitle(''); setShowPages(false)
-    setEditorInit(null); refreshTemplates()
+    setEditorInit(null)
   }
 
   // Render whichever page is on screen next. Without this, jumping to page 30
@@ -627,114 +545,93 @@ export default function App() {
   }
 
   // ================= HOME SCREEN =================
+  // Deliberately quiet: two things to do, said plainly, with everything else
+  // (status, settings, provenance) demoted to the footer where it can be
+  // glanced at rather than read. A technician opening this on a tablet in a
+  // plant room should see the one button they came for, not a control panel.
   if (screen === 'home') {
     return (
-      <div className="home">
+      <div className="landing">
         <input ref={fileRef} type="file" accept={DOC_ACCEPT} hidden onChange={onFileChosen} />
-        <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={onImport} />
 
-        <header className="homehead">
-          <h1>ASAaei</h1>
-          <div className="headchips">
-            <button className={'chip conv ' + (converter?.ok ? 'on' : 'off')}
-              onClick={() => setScreen('settings')}
-              title={converter?.ok
-                ? `Word documents convert with ${converter.info?.engine || 'LibreOffice'} — exact layout`
-                : 'Word documents convert in the browser — approximate layout'}>
-              {converter == null ? '… checking' : converter.ok ? '✓ Exact conversion' : '≈ Browser conversion'}
-            </button>
-            <span className={'chip net ' + (online ? 'up' : 'down')}>{online ? 'Online' : 'Offline'}</span>
-            <button className="chip settings-btn" onClick={() => setScreen('settings')}>⚙ Settings</button>
-          </div>
-        </header>
-        <p className="tag">
-          {profile.name
-            ? <>Set up for <b>{profile.name}</b>{profile.sapId ? ` (${profile.sapId})` : ''} — forms open pre-filled.</>
-            : <>Add your name and SAP ID in <button className="inlinelink" onClick={() => setScreen('settings')}>Settings</button> so forms open pre-filled.</>}
-        </p>
+        <div className="landing-inner">
+          <header className="landing-head">
+            <span className="landing-mark" aria-hidden="true">
+              <svg viewBox="0 0 44 44" width="44" height="44">
+                <rect x="8" y="4" width="24" height="32" rx="4" fill="#fff" stroke="#c6d0e4" strokeWidth="1.5" />
+                <rect x="13" y="11" width="14" height="2.4" rx="1.2" fill="#3b57a6" />
+                <rect x="13" y="17" width="14" height="2.4" rx="1.2" fill="#c9d3e6" />
+                <rect x="13" y="23" width="9" height="2.4" rx="1.2" fill="#c9d3e6" />
+                <path d="M25 30.5 l9.5-9.5 3.5 3.5-9.5 9.5-4.6 1.1z"
+                  fill="#e8eefb" stroke="#3b57a6" strokeWidth="1.6" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <h1>ASAaei</h1>
+            <button className="ghostbtn" onClick={() => setScreen('settings')}>Settings</button>
+          </header>
+          <p className="landing-sub">Fill, sign and lock documents — on iPad, tablet or desktop.</p>
 
-        <section className="homecard">
-          <h2>Start here</h2>
-          <div className="actions primary-actions">
-            <button className="big primary" onClick={() => pickFile('new')}>
-              Fill out a document
-              <small>Open a PDF or Word form and start filling boxes right away.</small>
-            </button>
-            <button className="big primary" onClick={openEditor}>
-              Edit a document
-              <small>Open or create a document and update text, formatting, and layout.</small>
-            </button>
-          </div>
-        </section>
+          <p className="landing-greeting">
+            {profile.name
+              ? <>Ready for <b>{profile.name}</b>{profile.sapId ? <> · {profile.sapId}</> : null} — your details go into every
+                form as it opens.</>
+              : <>Add your name and SAP ID in <button className="inlinelink" onClick={() => setScreen('settings')}>Settings</button> and
+                every form will open already filled in.</>}
+          </p>
 
-        {templates.length > 0 && (
-          <section className="homecard">
-            <h2>Saved fill layouts</h2>
-            <p className="cardhint">
-              Field layouts you saved earlier. Pick one, then open the document to fill.
-              A form the app recognises by its document number re-applies its layout on its own.
-            </p>
-            <ul className="tpllist">
-              {templates.map((t) => (
-                <li key={t.id} className="tplrow">
-                  <button className="tplmain" onClick={() => useTemplate(t)}>
-                    <b>{t.name}</b>
-                    <small>
-                      {t.docKey ? <code>{t.docKey}</code> : 'no document number'}
-                      {' · '}{t.fieldCount ?? ''} {t.fieldCount === 1 ? 'field' : 'fields'}
-                    </small>
-                  </button>
-                  <div className="tplacts">
-                    <button onClick={() => doExport(t)} title="Save this layout as a file to share">Export</button>
-                    <button className="danger" onClick={() => removeTemplate(t)} title="Delete this layout">Delete</button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-
-        <section className="homecard">
-          <h2>More options</h2>
-          <div className="actions secondary-actions">
-            <button className="big" onClick={startBlank}>
-              Blank fillable page<small>Place fields on an empty A4 sheet.</small>
+          <div className="choices">
+            <button className="choice" onClick={() => pickFile('new')}>
+              <span className="choice-icon" aria-hidden="true">
+                <svg viewBox="0 0 32 32" width="26" height="26" fill="none"
+                  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M7 4h12l6 6v18a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+                  <path d="M19 4v6h6" />
+                  <path d="M10 17h9M10 22h6" />
+                </svg>
+              </span>
+              <span className="choice-title">Fill out a document</span>
+              <span className="choice-note">
+                Open a PDF or Word form. The boxes are found for you — type, tick, sign, then save the finished PDF.
+              </span>
+              <span className="choice-go">Choose a file</span>
             </button>
-            <button className="big" onClick={() => importRef.current?.click()}>
-              Import fill layout<small>Load a shared field layout file.</small>
+
+            <button className="choice" onClick={openEditor}>
+              <span className="choice-icon" aria-hidden="true">
+                <svg viewBox="0 0 32 32" width="26" height="26" fill="none"
+                  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M25 5.5a3 3 0 0 1 4.2 4.2L14 25l-5.5 1.5L10 21z" />
+                  <path d="M4 28h13" />
+                </svg>
+              </span>
+              <span className="choice-title">Edit a document</span>
+              <span className="choice-note">
+                Write a new document or open an existing one and change the wording, formatting and layout.
+              </span>
+              <span className="choice-go">Open the editor</span>
             </button>
           </div>
-        </section>
 
-        {busy && <div className="busy">{busy}</div>}
-        <p className="hint">Open documents from your device and save finished files locally. Nothing is uploaded.</p>
-        <p className="hint faint">Build {BUILD_ID}</p>
-      </div>
-    )
-  }
+          {busy && <div className="landing-busy">{busy}</div>}
 
-  // ================= EDITOR: waiting for source document =================
-  if (needSource && !pages.length) {
-    return (
-      <div className="home">
-        <input ref={fileRef} type="file" accept={DOC_ACCEPT} hidden onChange={onFileChosen} />
-        <header className="homehead">
-          <h1>{fileName}</h1>
-          <button onClick={goHome}>Home</button>
-        </header>
-        <p className="tag">Open the document to apply this layout and fill it in.</p>
-        <section className="actions">
-          <button className="big primary" onClick={() => pickFile('apply', activeTemplateId)}>
-            Open document<small>Choose the PDF or Word file to fill with this layout.</small>
-          </button>
-          {cachedDoc && (
-            <button className="big" onClick={useOfflineCopy}>
-              Reopen last file<small>Saved {new Date(cachedDoc.savedAt).toLocaleString()}</small>
-            </button>
-          )}
-        </section>
-        {busy && <div className="busy">{busy}</div>}
-        <p className="hint">If the form has changed, open the current file so the layout matches.</p>
+          <footer className="landing-foot">
+            <div className="statusrow">
+              <button className={'status ' + (converter == null ? 'wait' : converter.ok ? 'ok' : 'warn')}
+                onClick={() => setScreen('settings')}
+                title={converter?.ok
+                  ? `Word documents convert with ${converter.info?.engine || 'LibreOffice'} — exact layout`
+                  : 'Word documents convert in the browser — approximate layout'}>
+                <span className="dot" />
+                {converter == null ? 'Checking conversion' : converter.ok ? 'Exact Word conversion' : 'Browser conversion'}
+              </button>
+              <span className={'status ' + (online ? 'ok' : 'warn')}>
+                <span className="dot" />{online ? 'Online' : 'Offline — still works'}
+              </span>
+            </div>
+            <p>Documents are opened from this device and saved back to it. Nothing is uploaded.</p>
+            <p className="build">Build {BUILD_ID}</p>
+          </footer>
+        </div>
       </div>
     )
   }
@@ -775,7 +672,7 @@ export default function App() {
             </button>
           )}
           {mode === 'design' && !locked && <button onClick={saveAsTemplate}>💾 Save as template</button>}
-          <button onClick={() => pickFile('reload', activeTemplateId)}>↻ Reload file</button>
+          <button onClick={() => pickFile('reload')}>↻ Reload file</button>
           {locked && <span className="locked-badge">🔒 Locked</span>}
           {!locked && <button onClick={finalize}>Finalize &amp; lock</button>}
           <button className="primary" onClick={download}>Download PDF</button>
