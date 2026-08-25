@@ -477,8 +477,11 @@ button.danger:hover { background: #fdf1f2; }
 .approxroute b { color: #26314c; font-size: 15px; }
 .approxroute p { color: #5a647a; font-size: 13.5px; line-height: 1.6; margin: 6px 0 12px; }
 .approxroute .big { align-items: center; padding: 12px 18px; }
-.approxactions { justify-content: space-between; margin-top: 16px; }
-.approxanyway { color: #7a8398; font-size: 13px; }
+.approxactions { justify-content: flex-start; margin-top: 16px; }
+.approxfoot {
+  color: #8691a8; font-size: 12.5px; line-height: 1.6;
+  margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--line);
+}
 .openingactions .big { align-items: center; padding: 12px 20px; }
 .openingcancel {
   margin-top: 20px; padding: 8px 20px; font-size: 14px;

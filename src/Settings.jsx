@@ -88,7 +88,9 @@ export default function Settings({ onExit, profile, onProfile }) {
           {[
             ['auto', 'Automatic (recommended)', 'Use the converter when it can be reached, otherwise convert in the browser.'],
             ['service', 'Always use the converter', 'Never fall back. Opening a Word file reports an error if the converter is down.'],
-            ['browser', 'Always convert in the browser', 'Never contact a converter. Fully offline, approximate layout.'],
+            ['browser', 'Approximate copy in the browser',
+              'Never contacts a converter. Rebuilds the Word file offline — ruled cells, column '
+              + 'widths and page breaks move. Never for a controlled or issued document.'],
           ].map(([value, label, help]) => (
             <label key={value} className={'radiorow' + (settings.mode === value ? ' on' : '')}>
               <input type="radio" name="convmode" value={value}

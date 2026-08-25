@@ -6,7 +6,18 @@ import { detectPdfFields, sniffPdfIdentity } from './pdfFields.js'
 import { extractIdentity } from './docId.js'
 import {
   convertViaService, discoverConverter, ConverterUnavailableError, converterRequired,
+  approximationAllowed,
 } from './converter.js'
+
+// Refusing to approximate a Word document is a decision, not a failure, so it
+// travels as its own error type — the UI answers it with the two exact routes
+// rather than with an apology.
+export class ApproximateLayoutBlocked extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'ApproximateLayoutBlocked'
+  }
+}
 
 // A4 in CSS pixels (~96 dpi) and in PDF points.
 const A4_W_PX = 794
@@ -184,9 +195,24 @@ export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.
         + 'Start it with "npm run serve", or switch conversion back to Automatic.',
       )
     }
-    // No converter — carry on in the browser exactly as before, except for the
-    // legacy binary .doc format, which only LibreOffice can read. Saying so is
-    // far more use than mammoth's parse error.
+    // No converter. The in-browser route does not reproduce a Word document —
+    // it rebuilds one that reads the same and photographs it, so ruled cells,
+    // column widths, headers and page breaks all move. For a controlled
+    // document that is not a lower-quality copy, it is a different document, so
+    // it takes a deliberate choice in Settings and is never the default.
+    //
+    // The caller normally stops before reaching this (App.jsx offers the two
+    // exact routes first); this is the backstop that makes it impossible to
+    // arrive at an approximate rendering by accident.
+    if (!approximationAllowed()) {
+      throw new ApproximateLayoutBlocked(
+        'This Word document cannot be opened without exact conversion, and the app will not '
+        + 'rebuild it at approximate geometry. Open it in Word and use File → Save as → PDF, '
+        + 'then open that PDF here — or set up the converter.',
+      )
+    }
+    // The legacy binary .doc format is one only LibreOffice can read; saying so
+    // is far more use than mammoth's parse error.
     if (/\.doc$/i.test(filename)) {
       throw new Error(
         'Older .doc files need the converter, which is not running. '

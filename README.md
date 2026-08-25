@@ -26,9 +26,11 @@ two routes and picks the better one automatically:
 | File size (35-page form) | ~300 KB | several MB |
 | Field boxes | Read from the document's own ruled cells | Measured off a re-flowed HTML copy |
 | Needs | LibreOffice installed on one machine | Nothing |
+| Used | Whenever it is reachable | Only if you select it in Settings |
 
-The fallback is genuinely usable and completely offline, so **the converter is optional** — but
-for the AEI inspection forms it is worth the ten minutes of setup.
+The in-browser route is a rough working copy, not a substitute: it is never used automatically.
+Without a converter, open the PDF that Word itself produces (below) — for a controlled document
+that is the answer, and it needs nothing installed.
 
 ### Setting it up (once, on one computer)
 
@@ -76,9 +78,15 @@ rather than accepting forms and failing every one of them.
 
 Save the PDF from Word itself: **File → Save as → PDF**, then open that PDF here. It is Word's
 own rendering, so the layout is exact and the text stays selectable, and the app fills PDFs
-without converting anything. ASAaei suggests this itself when a Word file is opened with no
-converter available — it asks before falling back, rather than quietly rebuilding a controlled
-document at approximate geometry.
+without converting anything.
+
+**A Word file is opened exactly or not at all.** With no converter reachable, ASAaei refuses the
+document and offers those two routes — it does not rebuild it in the browser. An approximate
+rebuild moves ruled cells, column widths, headers and page breaks; a controlled document that
+has moved is not a rougher copy of itself, it is a different document, and no warning banner
+makes one safe to sign or file. The in-browser route still exists for a rough working copy, but
+only for someone who selects **Approximate copy in the browser** in Settings, and the result is
+labelled as not the original wherever it is shown.
 
 > `python3-uno` is what makes it fast. It lets the server keep LibreOffice warm and hand it
 > documents over a socket, instead of starting LibreOffice from scratch for every file (which costs

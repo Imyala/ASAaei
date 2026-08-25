@@ -271,6 +271,12 @@ export async function convertViaService(input, filename, { quality, signal } = {
 // conversion.
 export const converterRequired = () => getConverterSettings().mode === 'service'
 
+// True only when the user has deliberately chosen the in-browser route. Every
+// other setting means a Word document is opened exactly or not at all: an
+// approximate rebuild of a controlled document is not a degraded copy of it,
+// it is a different document, and nothing should produce one by default.
+export const approximationAllowed = () => getConverterSettings().mode === 'browser'
+
 // ---- helper ----------------------------------------------------------------
 
 function fetchWithTimeout(url, options, timeoutMs) {

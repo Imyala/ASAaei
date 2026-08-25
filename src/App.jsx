@@ -116,9 +116,6 @@ export default function App() {
   const renderRef = useRef(null)
   // Lets the opening screen's Cancel actually stop the work in flight.
   const openJobRef = useRef(null)
-  // Set once the user has accepted an approximate layout, so the warning is a
-  // decision rather than a nag on every file for the rest of the session.
-  const approxOkRef = useRef(false)
 
   const selected = fields.find((f) => f.id === selectedId) || null
 
@@ -222,12 +219,13 @@ export default function App() {
 
     // A Word document with no converter to hand would be rebuilt from scratch
     // and photographed: the text survives, the layout does not — column widths,
-    // ruled cells and spacing all shift. On a controlled document that is not a
-    // cosmetic difference, so say so BEFORE doing it, and point at the two ways
-    // to keep the layout exactly. Only 'auto' asks: 'browser' is a deliberate
-    // choice already made, and 'service' refuses outright further down.
-    if (/\.docx?$/i.test(file.name) && !approxOkRef.current
-        && getConverterSettings().mode === 'auto') {
+    // ruled cells, headers and page breaks all move. A controlled document that
+    // has moved is not a lower-quality copy of itself, it is a different
+    // document, and no amount of warning text makes one safe to sign. So the
+    // app stops here and offers the two routes that keep the layout exactly.
+    // Producing an approximate copy stays possible, but only for someone who
+    // has gone into Settings and asked for it.
+    if (/\.docx?$/i.test(file.name) && getConverterSettings().mode !== 'browser') {
       const found = await discoverConverter()
       setConverter(found)
       if (!found.ok) {
@@ -438,6 +436,25 @@ export default function App() {
     finally { setBusy('') }
   }
 
+  // Drop the service worker and its caches, then reload. The app is a PWA, so a
+  // browser that already has it can keep serving the build it cached — which is
+  // indistinguishable, from the user's side, from a fix that was never made.
+  const forceUpdate = async () => {
+    setBusy('Fetching the newest version…')
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(regs.map((r) => r.unregister()))
+      }
+      if (window.caches?.keys) {
+        const keys = await caches.keys()
+        await Promise.all(keys.map((k) => caches.delete(k)))
+      }
+    } catch { /* a browser that blocks either one still reloads below */ }
+    try { sessionStorage.clear() } catch { /* private mode */ }
+    location.reload()
+  }
+
   const goHome = () => {
     // Stop drawing pages nobody is looking at any more, and hand back the
     // memory their images hold.
@@ -556,9 +573,9 @@ export default function App() {
   }
 
   // ================= WORD FILE, NO EXACT CONVERSION =================
-  // The one screen in the app that stops the user rather than getting on with
-  // it. Filling in a form whose ruled table has quietly moved is worse than
-  // waiting a minute to do it properly, and both proper routes are quick.
+  // The one screen in the app that refuses. Both routes out of it are quick,
+  // and either one keeps the document identical to the original — which is the
+  // only acceptable outcome for a document that may be held as a record.
   if (screen === 'approx' && approxAsk) {
     return (
       <div className="home openingscreen">
@@ -567,21 +584,21 @@ export default function App() {
           <h1>ASAaei</h1>
         </header>
         <section className="homecard openingcard approxcard">
-          <h2 className="openingtitle warn">This Word file would lose its layout</h2>
-          <p className="openingname">{approxAsk.name || approxAsk.file.name}</p>
+          <h2 className="openingtitle warn">This Word file needs exact conversion</h2>
+          <p className="openingname">{approxAsk.file.name}</p>
           <p className="approxbody">
-            Exact conversion is not available here, so the app would rebuild the document from
-            scratch and photograph the result. The words survive; column widths, ruled cells,
-            headers and spacing shift. On a controlled document that is not a cosmetic
-            difference.
+            Exact conversion is not available here, and the app will not rebuild a Word document
+            at approximate geometry: the words would survive, but column widths, ruled cells,
+            headers and page breaks would all move. A controlled document that has moved is not
+            a rougher copy of itself — it is a different document. Two ways to open it properly:
           </p>
 
           <div className="approxroute">
-            <b>Keep the layout exactly — no setup</b>
+            <b>1 · Save it as a PDF from Word — nothing to install</b>
             <p>
               Open the file in Word, choose <b>File → Save as</b> and pick <b>PDF</b>. Open that
-              PDF here. It is Word's own rendering, so the layout is exact, the text stays
-              selectable, and the fill boxes land in the real ruled cells.
+              PDF here. It is Word's own rendering, so the layout is exact to the millimetre, the
+              text stays selectable, and the fill boxes land in the document's real ruled cells.
             </p>
             <button className="big primary" onClick={() => { setApproxAsk(null); pickFile('new') }}>
               Choose the PDF instead
@@ -589,7 +606,7 @@ export default function App() {
           </div>
 
           <div className="approxroute muted">
-            <b>Or set up exact conversion for every Word file</b>
+            <b>2 · Set up the converter, and every Word file opens exactly</b>
             <p>{approxAsk.reason}{approxAsk.fix ? ` ${approxAsk.fix}` : ''}</p>
             <button onClick={() => { setApproxAsk(null); setScreen('settings') }}>
               Open conversion settings
@@ -598,11 +615,12 @@ export default function App() {
 
           <div className="openingactions approxactions">
             <button onClick={() => { setApproxAsk(null); setScreen('home') }}>Cancel</button>
-            <button className="approxanyway"
-              onClick={() => { approxOkRef.current = true; const f = approxAsk.file; setApproxAsk(null); beginOpen(f) }}>
-              Open anyway with an approximate layout
-            </button>
           </div>
+          <p className="approxfoot">
+            An approximate copy can still be produced on purpose — <i>Always convert in the
+            browser</i>, in Settings. Never for a document that is controlled, issued or held
+            as a record.
+          </p>
         </section>
       </div>
     )
@@ -709,7 +727,10 @@ export default function App() {
               </span>
             </div>
             <p>Documents are opened from this device and saved back to it. Nothing is uploaded.</p>
-            <p className="build">Build {BUILD_ID}</p>
+            <p className="build">
+              Build {BUILD_ID}
+              <button className="inlinelink" onClick={forceUpdate}>check for update</button>
+            </p>
           </footer>
         </div>
       </div>
@@ -770,8 +791,10 @@ export default function App() {
           it be discovered when the printed form comes out wrong. */}
       {fidelity === 'approximate' && (
         <div className="fidelity-bar warn">
-          ≈ Converted in the browser — the layout is approximate and the pages are images.
-          For an exact layout, save the Word file as a PDF from Word and open that instead.
+          <b>Approximate copy — not the original document.</b> Rebuilt in the browser: the ruled
+          cells, column widths and page breaks are not the document's own. Do not use it as a
+          controlled or issued record. For an exact copy, save the Word file as a PDF from Word
+          and open that instead.
           <button className="inlinelink" onClick={() => setScreen('settings')}>Set up exact conversion</button>
         </div>
       )}
