@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 import { checkFonts, fontsUsedInDocx } from './fonts.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
+const ROOT = path.resolve(HERE, '..')
 const WORKER_PY = path.join(HERE, 'uno-worker.py')
 
 // Extensions we accept, mapped to the LibreOffice export filter that produces a
@@ -99,6 +100,32 @@ const MAC_DIRS = [
   '/Applications/LibreOffice.app/Contents/MacOS',
 ]
 
+// Where a LibreOffice that was never *installed* ends up. This matters more
+// than the list above: on a managed work laptop, installing anything needs an
+// administrator, while unzipping a portable build into a folder needs nobody.
+// Checking these means "put the portable build next to the app and start it"
+// works with nothing to configure.
+const portableDirs = () => {
+  const rel = ['libreoffice/program', 'vendor/libreoffice/program',
+    'LibreOfficePortable/App/libreoffice/program']
+  const roots = [ROOT, process.cwd()]
+  const out = []
+  for (const root of roots) for (const r of rel) out.push(path.join(root, r))
+  if (process.platform === 'win32') {
+    const home = process.env.USERPROFILE || ''
+    const local = process.env.LOCALAPPDATA || ''
+    for (const base of [home, local, 'C:/'].filter(Boolean)) {
+      out.push(path.join(base, 'LibreOfficePortable/App/libreoffice/program'))
+    }
+    // A per-user (non-admin) install lands here rather than in Program Files.
+    if (local) out.push(path.join(local, 'Programs/LibreOffice/program'))
+  } else if (process.platform === 'darwin') {
+    const home = process.env.HOME || ''
+    if (home) out.push(path.join(home, 'Applications/LibreOffice.app/Contents/MacOS'))
+  }
+  return out
+}
+
 const exists = (p) => fs.access(p).then(() => true, () => false)
 
 // Find the `soffice` binary. Honours SOFFICE_PATH first so an unusual install
@@ -107,6 +134,8 @@ const exists = (p) => fs.access(p).then(() => true, () => false)
 export async function findSoffice() {
   const candidates = []
   if (process.env.SOFFICE_PATH) candidates.push(process.env.SOFFICE_PATH)
+  const exe = process.platform === 'win32' ? 'soffice.exe' : 'soffice'
+  for (const d of portableDirs()) candidates.push(path.join(d, exe))
   if (process.platform === 'win32') {
     for (const d of WIN_DIRS) candidates.push(path.join(d, 'soffice.exe'))
   } else if (process.platform === 'darwin') {

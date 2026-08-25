@@ -297,6 +297,41 @@ function lanUrls(port) {
   return out
 }
 
+// `--check` — one command that answers "is exact conversion going to work on
+// this machine, and if not, why". It runs the same start-up path as the server
+// (find LibreOffice, start the workers, convert a test document) and prints a
+// verdict instead of listening. Meant to be runnable by whoever is setting the
+// machine up, without reading any of this code.
+if (args.check) {
+  log('checking this machine…')
+  await pool.init()
+  const h = pool.health()
+  const fonts = await fontReport().catch(() => null)
+  log('')
+  log(`LibreOffice   ${h.engine || 'NOT FOUND'}`)
+  log(`Path          ${pool.soffice || '—'}`)
+  log(`Mode          ${h.mode}${h.warm ? ' (warm, sub-second)' : ''}`)
+  log(`Workers       ${h.workers}`)
+  if (fonts) {
+    log(`Fonts         ${fonts.families} families installed`)
+    if (fonts.missing?.length) {
+      log(`  MISSING     ${fonts.missing.join(', ')}`)
+      log('              Documents using these will re-wrap. Run: npm run setup-fonts')
+    }
+  }
+  log('')
+  if (h.ok) {
+    log('RESULT: exact conversion works on this machine.')
+    log(`Start it with:  node server/convert-server.mjs --port ${PORT}`)
+    log('Then open the app from this machine\'s address, not from the hosted copy.')
+  } else {
+    log('RESULT: exact conversion will NOT work here.')
+    log(`Reason: ${h.error || 'unknown'}`)
+  }
+  pool.stop()
+  process.exit(h.ok ? 0 : 1)
+}
+
 server.listen(PORT, HOST, async () => {
   log(`serving on http://localhost:${PORT}`)
   for (const u of lanUrls(PORT)) log(`  on this network: ${u}`)

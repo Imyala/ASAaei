@@ -32,7 +32,38 @@ The in-browser route is a rough working copy, not a substitute: it is never used
 Without a converter, open the PDF that Word itself produces (below) — for a controlled document
 that is the answer, and it needs nothing installed.
 
-### Setting it up (once, on one computer)
+### Deliberately not Microsoft
+
+The conversion is done by LibreOffice and nothing else. Microsoft's own
+services will convert a Word file to a PDF perfectly — Word's *Save as PDF*,
+SharePoint's *Download as PDF*, the Graph `?format=pdf` endpoint — and the app
+does not use any of them. LibreOffice is [MPL-2.0](https://www.libreoffice.org/licenses/):
+it can be run, redistributed and relied on with no licence to negotiate, no
+tenant, no account, and no service that can change its terms. For documents
+that may be held as records, the conversion step should not depend on somebody
+else's product.
+
+(Opening a PDF that Word produced is a different matter — that is just a PDF,
+and the app reads it with pdf.js. It is the *converting* that stays ours.)
+
+### The quickest way: one container, one machine
+
+```bash
+docker build -t asaaei .
+docker run -d --restart unless-stopped -p 8787:8787 --name asaaei asaaei
+```
+
+Then open `http://<that-machine>:8787` on every tablet and PC. Nothing is
+installed on the devices, exact conversion is on for all of them, and the image
+carries the metric-compatible fonts so lines break where Word breaks them.
+
+```bash
+docker run --rm asaaei node server/convert-server.mjs --check
+```
+
+...prints whether conversion works and, if not, why.
+
+### Setting it up by hand (once, on one computer)
 
 ```bash
 # 1. LibreOffice — the conversion engine (free, open source)
@@ -47,6 +78,23 @@ npm run setup-fonts
 npm install
 npm run serve
 ```
+
+**No administrator rights?** Nothing here needs an installer. Unzip a portable
+LibreOffice (and, if Node is not present, a portable Node) and the server finds
+it on its own — it looks for `libreoffice/program/soffice` next to the app and
+in the working directory, for `LibreOfficePortable/…` in the usual places, and
+for a per-user install under `%LOCALAPPDATA%\Programs\LibreOffice`. Anything
+else: point `SOFFICE_PATH` at the binary.
+
+Check a machine before relying on it:
+
+```bash
+npm run check
+```
+
+It finds LibreOffice, starts the workers, converts a test document and prints a
+verdict — including which fonts are missing, since a missing font re-wraps the
+document and that is a layout change like any other.
 
 `npm run serve` prints the addresses it is reachable on:
 

@@ -11,7 +11,8 @@
     "serve": "npm run build && node server/convert-server.mjs",
     "convert-server": "node server/convert-server.mjs",
     "setup-fonts": "bash server/setup-fonts.sh",
-    "test": "node --test src/*.test.mjs server/*.test.mjs"
+    "test": "node --test src/*.test.mjs server/*.test.mjs",
+    "check": "node server/convert-server.mjs --check"
   },
   "dependencies": {
     "html2canvas": "^1.4.1",
