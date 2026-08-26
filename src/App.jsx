@@ -7,6 +7,7 @@ import { getProfile, setProfile, applyProfile } from './profile.js'
 import DocEditor from './DocEditor.jsx'
 import Settings from './Settings.jsx'
 import { discoverConverter, getConverterSettings, lastConverterStatus } from './converter.js'
+import { wasmConfigured } from './wasmConverter.js'
 
 // Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
 // running version is identifiable when diagnosing stale caches.
@@ -225,7 +226,10 @@ export default function App() {
     // app stops here and offers the two routes that keep the layout exactly.
     // Producing an approximate copy stays possible, but only for someone who
     // has gone into Settings and asked for it.
-    if (/\.docx?$/i.test(file.name) && getConverterSettings().mode !== 'browser') {
+    // The engine on the device counts as exact conversion, so a device that
+    // carries it never sees this screen.
+    if (/\.docx?$/i.test(file.name) && getConverterSettings().mode !== 'browser'
+        && !wasmConfigured()) {
       const found = await discoverConverter()
       setConverter(found)
       if (!found.ok) {
@@ -272,8 +276,11 @@ export default function App() {
           // returns the whole PDF at once, and quickly — so don't invent one.
           stage: meta?.stage === 'service'
             ? 'Converting with LibreOffice…'
-            : `Converting in this browser — page ${Math.min(done + 1, total)} of ${total}…`,
-          progress: meta?.stage === 'service' || !total ? 0 : (done / total),
+            : meta?.stage === 'wasm'
+              ? (meta.message || 'Converting with LibreOffice on this device…')
+              : `Converting in this browser — page ${Math.min(done + 1, total)} of ${total}…`,
+          progress: meta?.stage === 'service' || meta?.stage === 'wasm' || !total
+            ? 0 : (done / total),
         })),
       })
       if (job.signal.aborted) return

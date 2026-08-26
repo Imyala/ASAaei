@@ -38,6 +38,10 @@ const DEFAULTS = {
   mode: 'auto',
   url: '',
   quality: 'balanced',
+  // Where the in-browser LibreOffice engine is hosted. Empty means the route
+  // is off entirely: nothing is downloaded and none of that code runs. It is
+  // not bundled because it is ~237 MB — far past what a repository can hold.
+  wasmUrl: '',
 }
 
 export const QUALITY_LABELS = {

@@ -3,6 +3,7 @@ import {
   QUALITY_HELP, QUALITY_LABELS,
   discoverConverter, getConverterSettings, setConverterSettings,
 } from './converter.js'
+import { isolationProblem, resetWasmEngine } from './wasmConverter.js'
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -19,6 +20,7 @@ export default function Settings({ onExit, profile, onProfile }) {
   const [status, setStatus] = useState(null)   // health payload, or an error
   const [checking, setChecking] = useState(false)
   const [draftUrl, setDraftUrl] = useState(settings.url)
+  const [draftWasm, setDraftWasm] = useState(settings.wasmUrl || '')
 
   const check = useCallback(async () => {
     setChecking(true)
@@ -44,6 +46,13 @@ export default function Settings({ onExit, profile, onProfile }) {
     const url = draftUrl.trim().replace(/\/+$/, '')
     setDraftUrl(url)
     update({ url })
+  }
+
+  const applyWasm = () => {
+    const wasmUrl = draftWasm.trim()
+    setDraftWasm(wasmUrl)
+    resetWasmEngine()
+    setSettings(setConverterSettings({ wasmUrl }))
   }
 
   return (
@@ -132,6 +141,47 @@ export default function Settings({ onExit, profile, onProfile }) {
               inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
             <button onClick={applyUrl} disabled={draftUrl.trim() === settings.url}>Save &amp; test</button>
           </div>
+        </fieldset>
+
+        <fieldset className="settingfield">
+          <legend>LibreOffice on this device (experimental)</legend>
+          <p className="settinghelp">
+            The same LibreOffice, compiled to WebAssembly and run on the device itself — no
+            converter machine, no install, and once it has downloaded it works with no
+            network at all. It is about 237 MB, so it is not built into the app: host the
+            engine files somewhere and give the address here. Leave blank and none of it is
+            downloaded or used.
+          </p>
+          <p className="convwarn">
+            <b>Too slow for a long procedure.</b> Measured against the converter service on the
+            same machine: a one-page document took 1.4 s here versus 0.1 s there; a 34-page AEI
+            procedure did not finish in 5 minutes, and a 65-page one did not finish in 30, both
+            of which the service converts in under 4 seconds. Useful for a short form on a
+            device with no other option; not for the procedures.
+          </p>
+          <div className="worow">
+            <input className="woinput" placeholder="https://files.example.com/libreoffice-wasm/"
+              value={draftWasm} onChange={(e) => setDraftWasm(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyWasm() }}
+              inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+            <button onClick={applyWasm} disabled={draftWasm.trim() === (settings.wasmUrl || '')}>
+              Save
+            </button>
+          </div>
+          {settings.wasmUrl && isolationProblem() && (
+            <p className="convwarn">{isolationProblem()}</p>
+          )}
+          {settings.wasmUrl && !isolationProblem() && (
+            <small className="settinghelp">
+              This page is cross-origin isolated, so the engine can run. It is downloaded the
+              first time a Word document is opened without a converter reachable.
+            </small>
+          )}
+          <small className="settinghelp">
+            The engine carries its own fonts and cannot see the ones installed here, so
+            Verdana, Segoe UI and MS Gothic are substituted on every device alike. A
+            converter machine that has those fonts licensed is still the exact route.
+          </small>
         </fieldset>
 
         <details className="settinghelpbox">

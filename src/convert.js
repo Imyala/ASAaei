@@ -8,6 +8,7 @@ import {
   convertViaService, discoverConverter, ConverterUnavailableError, converterRequired,
   approximationAllowed,
 } from './converter.js'
+import { convertViaWasm, wasmConfigured, WasmEngineError } from './wasmConverter.js'
 
 // Refusing to approximate a Word document is a decision, not a failure, so it
 // travels as its own error type — the UI answers it with the two exact routes
@@ -189,6 +190,43 @@ export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.
     }
   } catch (err) {
     if (!(err instanceof ConverterUnavailableError)) throw err
+
+    // No service. If the device carries the engine itself, that is the same
+    // LibreOffice doing the same job, so try it before giving up — this is the
+    // route that needs no server and works with no network at all.
+    if (wasmConfigured()) {
+      try {
+        onProgress?.(0, 0, { stage: 'wasm' })
+        const out = await convertViaWasm(new Uint8Array(arrayBuffer), filename, {
+          signal,
+          onProgress: (msg) => onProgress?.(0, 0, { stage: 'wasm', message: msg }),
+        })
+        const [autoFields, identity] = await Promise.all([
+          detectPdfFields(out.bytes).catch((e) => {
+            console.warn('Field auto-detection failed on the converted PDF:', e)
+            return []
+          }),
+          sniffPdfIdentity(out.bytes).catch(() => extractIdentity('', filename)),
+        ])
+        if (!identity.docTitle) identity.docTitle = filename.replace(/\.docx?$/i, '')
+        return {
+          bytes: out.bytes, autoFields, ...identity,
+          fidelity: 'exact', engine: out.engine, missingFonts: out.missingFonts,
+        }
+      } catch (wasmErr) {
+        if (wasmErr?.name === 'AbortError') throw wasmErr
+        // The engine is configured but unusable. That is worth reporting as
+        // itself rather than as "no converter" — the address may be wrong, or
+        // the page may not be isolated — and it must NOT fall through to an
+        // approximate rebuild.
+        if (wasmErr instanceof WasmEngineError) {
+          throw new ApproximateLayoutBlocked(
+            `The LibreOffice engine on this device could not be used. ${wasmErr.message}`)
+        }
+        throw wasmErr
+      }
+    }
+
     if (converterRequired()) {
       throw new Error(
         `${err.message}\n\nSettings are set to always use the converter. `

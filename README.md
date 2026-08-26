@@ -160,6 +160,35 @@ Two ways to close that gap, both legitimate:
 `npm run check` lists what is still missing on any machine, and the app shows the
 same list in a banner above a document it converted without them.
 
+### LibreOffice on the device (experimental, and slow)
+
+The same engine compiled to WebAssembly, run in the browser: no converter
+machine, no install, and it works with no network once cached. It is off unless
+an address is set under Settings → *LibreOffice on this device*, because the
+engine is ~237 MB and cannot live in this repository (git refuses files over
+100 MB) — host the four `soffice.*` files plus `browser.js` and point the app at
+them.
+
+The page must be **cross-origin isolated** (`Cross-Origin-Opener-Policy:
+same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) because the build
+uses threads. `npm run serve --isolate` sets those headers. **GitHub Pages
+cannot set headers at all**, so the hosted copy of the app cannot use this route.
+
+**Measured, on the same machine, against the converter service:**
+
+| Document | On the device (WASM) | Converter service |
+|---|---|---|
+| 1-page test | 1.4 s | 0.1 s |
+| AEI 3.4000 (34 pages) | did not finish in 5 min | 1.7 s |
+| AEI 3.3301 (65 pages) | did not finish in 30 min | 3.9 s |
+
+It converts correctly — a real PDF, from real LibreOffice — but the procedures
+this app exists for are far past what it can do in a usable time, and a tablet
+is slower than the machine those numbers came from. The converter service
+remains the answer for the AEI documents. The engine also carries its own fonts
+and cannot see the ones installed on the device, so Verdana, Segoe UI and MS
+Gothic are substituted on every device alike.
+
 ### No converter, and the layout still has to be exact
 
 Save the PDF from Word itself: **File → Save as → PDF**, then open that PDF here. It is Word's

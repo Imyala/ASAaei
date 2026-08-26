@@ -36,6 +36,11 @@ const HOST = args.host || process.env.HOST || '0.0.0.0'
 const STATIC_DIR = path.resolve(args.static || process.env.STATIC_DIR || path.join(ROOT, 'dist'))
 const MAX_UPLOAD = Number(args['max-upload'] || process.env.MAX_UPLOAD || 80) * 1024 * 1024
 const POOL_SIZE = Number(args.workers || process.env.WORKERS || 0) || undefined
+// Serve the app cross-origin isolated. The in-browser LibreOffice engine is
+// built with threads, so the browser only hands it SharedArrayBuffer on a page
+// carrying these headers. Off by default: isolation also refuses cross-origin
+// subresources that do not opt in, and the app does not need it otherwise.
+const ISOLATE = Boolean(args.isolate || process.env.ISOLATE === '1')
 
 const log = (msg) => console.log(`[asaaei] ${msg}`)
 
@@ -81,6 +86,15 @@ function cors(req, res) {
   }
 }
 
+// Headers a cross-origin-isolated page needs, plus the one that lets another
+// origin's isolated page load the engine files we serve.
+function isolationHeaders(res) {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+  if (!ISOLATE) return
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+}
+
 const sendJson = (res, code, body) => {
   const data = JSON.stringify(body)
   res.writeHead(code, {
@@ -93,6 +107,7 @@ const sendJson = (res, code, body) => {
 
 const server = http.createServer(async (req, res) => {
   cors(req, res)
+  isolationHeaders(res)
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
@@ -336,6 +351,7 @@ server.listen(PORT, HOST, async () => {
   log(`serving on http://localhost:${PORT}`)
   for (const u of lanUrls(PORT)) log(`  on this network: ${u}`)
   log(`app files: ${STATIC_DIR}`)
+  if (ISOLATE) log('cross-origin isolated — the in-browser LibreOffice engine can run here')
   log('starting LibreOffice…')
   await pool.init()
   const h = pool.health()
