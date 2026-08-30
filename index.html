@@ -50,6 +50,30 @@
         })
       })()
     </script>
+    <script>
+      // Cross-origin isolation, on hosts that cannot set headers (GitHub
+      // Pages). The service worker (src/sw.js) adds the COOP/COEP headers the
+      // in-website LibreOffice engine needs — but a page only becomes isolated
+      // when its OWN response carried them, which for a freshly-installed
+      // worker means one reload. Do that reload here, once, guarded so a page
+      // that cannot be isolated (plain http from another machine) never loops.
+      // On a server that already sends the headers (npm run serve, the dev
+      // server) crossOriginIsolated is already true and this does nothing.
+      (function () {
+        if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return
+        var KEY = 'asaaei:coi-reload'
+        function reloadOnce() {
+          if (window.crossOriginIsolated) return
+          if (!navigator.serviceWorker.controller) return // not controlled yet
+          if (sessionStorage.getItem(KEY)) return
+          try { sessionStorage.setItem(KEY, '1') } catch (e) {}
+          location.reload()
+        }
+        navigator.serviceWorker.ready.then(reloadOnce).catch(function () {})
+        // First-ever visit: the worker claims the page moments after install.
+        navigator.serviceWorker.addEventListener('controllerchange', reloadOnce)
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

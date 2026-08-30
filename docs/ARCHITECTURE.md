@@ -16,9 +16,11 @@ A single browser app that does two jobs with documents, chosen from the home scr
    (headings, styles, tables, images) — a Word/Adobe-style editor — then export a PDF or a
    re-editable HTML file.
 
-The app itself runs entirely on the device. The only optional server component is the **conversion
-service** (§4), which converts a document and hands the PDF straight back; it stores nothing and
-is normally run on a machine the team already owns.
+The app itself runs entirely on the device — including exact Word → PDF conversion: the website
+carries LibreOffice compiled to WebAssembly (`src/wasmConverter.js`), fetched from a CDN on first
+use and cached on the device. The only optional server component is the **conversion service**
+(§4), which does the same conversion much faster; it stores nothing and is normally run on a
+machine the team already owns.
 
 ## 2. Devices it must run on
 
@@ -26,9 +28,10 @@ Windows desktops, touchscreen/laptops, **and iPads/tablets**. That last one is t
 constraint — an iPad can't run a native program — so the app is a **responsive web app** that runs
 in any browser and installs as a **PWA** ("Add to Home Screen") for offline use.
 
-This is also why LibreOffice cannot simply be embedded: it is a native binary and there is no
-iPad build. Hence the split in §4 — the tablet stays a thin client, and one ordinary PC on the
-network does the conversion for everyone.
+This is also why LibreOffice cannot simply be *installed*: it is a native binary and there is no
+iPad build. Two answers coexist: LibreOffice compiled to WebAssembly runs inside the page itself
+(exact, slower, nothing to install), and the split in §4 — one ordinary PC on the network doing
+the conversion for everyone — remains the fast route for the long procedures.
 
 ## 3. The document engine (the core value)
 
@@ -131,7 +134,11 @@ get closest-proportion stand-ins and an honest warning.
   - `html2canvas` — rasterise HTML to page images (fallback route)
 - **Key modules (`src/`):**
   - `converter.js` — service discovery, settings, convert-with-fallback
-  - `convert.js` — the two conversion routes, shared `DOCX_CSS`, `fileToPdfBytes`
+  - `wasmConverter.js` — LibreOffice-in-the-browser: engine download/cache/decompress, blob
+    wiring, conversion (wrapper vendored in `public/libreoffice/`, engine fetched from a CDN)
+  - `sw.js` — the service worker: offline precache + the COOP/COEP headers that let the
+    WebAssembly engine run on hosts that cannot set headers (GitHub Pages)
+  - `convert.js` — the conversion routes, shared `DOCX_CSS`, `fileToPdfBytes`
   - `Settings.jsx` — converter status/options and the user's profile
   - `DocEditor.jsx` — the document editor (toolbar + contentEditable + PDF/HTML export)
   - `App.jsx` — home screen, the fill editor, page picker, fill layouts

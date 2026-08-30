@@ -3,7 +3,7 @@ import {
   QUALITY_HELP, QUALITY_LABELS,
   discoverConverter, getConverterSettings, setConverterSettings,
 } from './converter.js'
-import { isolationProblem, resetWasmEngine } from './wasmConverter.js'
+import { DEFAULT_ENGINE_ASSETS, isolationProblem, resetWasmEngine } from './wasmConverter.js'
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -144,39 +144,60 @@ export default function Settings({ onExit, profile, onProfile }) {
         </fieldset>
 
         <fieldset className="settingfield">
-          <legend>LibreOffice on this device (experimental)</legend>
+          <legend>LibreOffice inside the website</legend>
           <p className="settinghelp">
-            The same LibreOffice, compiled to WebAssembly and run on the device itself — no
-            converter machine, no install, and once it has downloaded it works with no
-            network at all. It is about 237 MB, so it is not built into the app: host the
-            engine files somewhere and give the address here. Leave blank and none of it is
-            downloaded or used.
+            The same LibreOffice, compiled to WebAssembly and run inside this page — nothing to
+            install and no converter machine. When no converter is reachable, the app fetches
+            the engine (a one-time ~78 MB download from a free public CDN), keeps it on this
+            device, and converts Word documents exactly — after the first download it works
+            with no network at all.
           </p>
-          <p className="convwarn">
-            <b>Too slow for a long procedure.</b> Measured against the converter service on the
-            same machine: a one-page document took 1.4 s here versus 0.1 s there; a 34-page AEI
-            procedure did not finish in 5 minutes, and a 65-page one did not finish in 30, both
-            of which the service converts in under 4 seconds. Useful for a short form on a
-            device with no other option; not for the procedures.
-          </p>
-          <div className="worow">
-            <input className="woinput" placeholder="https://files.example.com/libreoffice-wasm/"
-              value={draftWasm} onChange={(e) => setDraftWasm(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') applyWasm() }}
-              inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-            <button onClick={applyWasm} disabled={draftWasm.trim() === (settings.wasmUrl || '')}>
-              Save
-            </button>
-          </div>
-          {settings.wasmUrl && isolationProblem() && (
+          <label className={'radiorow' + (settings.deviceEngine !== 'off' ? ' on' : '')}>
+            <input type="checkbox"
+              checked={settings.deviceEngine !== 'off'}
+              onChange={(e) => {
+                resetWasmEngine()
+                update({ deviceEngine: e.target.checked ? 'on' : 'off' })
+              }} />
+            <span>
+              <b>Convert in this browser when no converter is reachable</b>
+              <small>Exact layout, from LibreOffice itself. Slower than the converter service.</small>
+            </span>
+          </label>
+          {settings.deviceEngine !== 'off' && isolationProblem() && (
             <p className="convwarn">{isolationProblem()}</p>
           )}
-          {settings.wasmUrl && !isolationProblem() && (
+          {settings.deviceEngine !== 'off' && !isolationProblem() && (
             <small className="settinghelp">
               This page is cross-origin isolated, so the engine can run. It is downloaded the
-              first time a Word document is opened without a converter reachable.
+              first time a Word document is opened with no converter reachable.
             </small>
           )}
+          <p className="convwarn">
+            <b>Slow for a long procedure.</b> Measured against the converter service on the
+            same machine: a one-page document took 1.4 s here versus 0.1 s there, and
+            multi-page AEI procedures take many minutes that the service converts in under 4
+            seconds. For the long procedures, the converter service is still the answer —
+            this route is for a device that has no reachable converter at all.
+          </p>
+          <details className="settinghelpbox">
+            <summary>Engine files address (advanced)</summary>
+            <p className="settinghelp">
+              Leave blank to use the built-in source ({DEFAULT_ENGINE_ASSETS}). Set it when
+              this network cannot reach the CDN: copy the engine files to any web server and
+              give their address here. Both the compressed (.wasm.gz/.data.gz) and plain
+              layouts are accepted.
+            </p>
+            <div className="worow">
+              <input className="woinput" placeholder={DEFAULT_ENGINE_ASSETS}
+                value={draftWasm} onChange={(e) => setDraftWasm(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') applyWasm() }}
+                inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+              <button onClick={applyWasm} disabled={draftWasm.trim() === (settings.wasmUrl || '')}>
+                Save
+              </button>
+            </div>
+          </details>
           <small className="settinghelp">
             The engine carries its own fonts and cannot see the ones installed here, so
             Verdana, Segoe UI and MS Gothic are substituted on every device alike. A

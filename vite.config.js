@@ -19,9 +19,30 @@ export default defineConfig({
   define: {
     __BUILD_ID__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
   },
+  // Cross-origin isolation in dev and preview. The production equivalents are
+  // the convert-server's headers and, on hosts that cannot set headers at all
+  // (GitHub Pages), the service worker (src/sw.js). Without these the
+  // in-website LibreOffice engine has no SharedArrayBuffer and cannot run.
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+  preview: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
   plugins: [
     react(),
     VitePWA({
+      // Hand-written worker (src/sw.js): workbox's generated one cannot inject
+      // the COOP/COEP headers the in-website LibreOffice engine needs.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
       manifest: {
@@ -36,7 +57,7 @@ export default defineConfig({
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
         ],
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       },

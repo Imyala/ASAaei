@@ -38,9 +38,14 @@ const DEFAULTS = {
   mode: 'auto',
   url: '',
   quality: 'balanced',
-  // Where the in-browser LibreOffice engine is hosted. Empty means the route
-  // is off entirely: nothing is downloaded and none of that code runs. It is
-  // not bundled because it is ~237 MB — far past what a repository can hold.
+  // The LibreOffice engine that runs inside the website (wasmConverter.js).
+  // 'on' by default: when no converter service is reachable, the engine is
+  // fetched from the built-in CDN source and the document still converts
+  // exactly. 'off' restores the old refuse-and-explain behaviour.
+  deviceEngine: 'on',
+  // Where the engine files are hosted. Empty means the built-in source
+  // (DEFAULT_ENGINE_ASSETS in wasmConverter.js); set it to a self-hosted copy
+  // when this network cannot reach the CDN.
   wasmUrl: '',
 }
 

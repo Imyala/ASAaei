@@ -7,7 +7,7 @@ import { getProfile, setProfile, applyProfile } from './profile.js'
 import DocEditor from './DocEditor.jsx'
 import Settings from './Settings.jsx'
 import { discoverConverter, getConverterSettings, lastConverterStatus } from './converter.js'
-import { wasmConfigured } from './wasmConverter.js'
+import { wasmAvailable, deviceEngineEnabled, isolationProblem } from './wasmConverter.js'
 
 // Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
 // running version is identifiable when diagnosing stale caches.
@@ -226,10 +226,10 @@ export default function App() {
     // app stops here and offers the two routes that keep the layout exactly.
     // Producing an approximate copy stays possible, but only for someone who
     // has gone into Settings and asked for it.
-    // The engine on the device counts as exact conversion, so a device that
-    // carries it never sees this screen.
+    // The engine inside the website counts as exact conversion, so this screen
+    // only appears when that engine is switched off or the page cannot run it.
     if (/\.docx?$/i.test(file.name) && getConverterSettings().mode !== 'browser'
-        && !wasmConfigured()) {
+        && !wasmAvailable()) {
       const found = await discoverConverter()
       setConverter(found)
       if (!found.ok) {
@@ -618,6 +618,16 @@ export default function App() {
             <button onClick={() => { setApproxAsk(null); setScreen('settings') }}>
               Open conversion settings
             </button>
+          </div>
+
+          <div className="approxroute muted">
+            <b>3 · LibreOffice inside the website</b>
+            <p>
+              {deviceEngineEnabled()
+                ? isolationProblem()
+                : 'The app can also convert with LibreOffice running inside this page — no '
+                  + 'install, exact layout, slower. It is switched off in Settings.'}
+            </p>
           </div>
 
           <div className="openingactions approxactions">

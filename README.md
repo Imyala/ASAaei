@@ -12,25 +12,34 @@ device — iPad, tablet, or desktop. It does two things, from one home screen:
 
 Nothing is uploaded to anyone else's server, and you save the finished file wherever you like.
 
-## Word → PDF: run the converter
+## Word → PDF: conversion is built into the website
 
 Word documents have to become PDFs before they can be filled in, and **how** that conversion is
-done is the difference between a form that matches the original and one that doesn't. The app has
-two routes and picks the better one automatically:
+done is the difference between a form that matches the original and one that doesn't. The app
+has three routes and picks the best reachable one automatically:
 
-| | **LibreOffice converter** | **In-browser fallback** |
-|---|---|---|
-| Layout | **Identical to Word** — real fonts, exact table geometry, headers/footers, page breaks | Approximated; text re-flows |
-| PDF text | Selectable and searchable (vector) | Flat page images |
-| Speed (35-page form) | **~1.7 s**, and instant on a repeat open | ~30 s+ |
-| File size (35-page form) | ~300 KB | several MB |
-| Field boxes | Read from the document's own ruled cells | Measured off a re-flowed HTML copy |
-| Needs | LibreOffice installed on one machine | Nothing |
-| Used | Whenever it is reachable | Only if you select it in Settings |
+| | **Converter service** | **LibreOffice in the website** | **Approximate (opt-in)** |
+|---|---|---|---|
+| Layout | **Identical to Word** | **Identical to Word** — same LibreOffice, compiled to WebAssembly | Approximated; text re-flows |
+| PDF text | Selectable (vector) | Selectable (vector) | Flat page images |
+| Speed (35-page form) | **~1.7 s** | minutes — fine for short forms | ~30 s+ |
+| Field boxes | From the document's own ruled cells | From the document's own ruled cells | Measured off a re-flowed HTML copy |
+| Needs | LibreOffice on one machine | Nothing — a one-time ~78 MB download, then works offline | Nothing |
+| Used | Whenever it is reachable | Automatically when no service is reachable | Only if selected in Settings |
 
-The in-browser route is a rough working copy, not a substitute: it is never used automatically.
-Without a converter, open the PDF that Word itself produces (below) — for a controlled document
-that is the answer, and it needs nothing installed.
+**Out of the box the app converts exactly with nothing installed**: the website carries the
+LibreOffice engine itself (WebAssembly). The first Word document triggers a one-time ~78 MB
+engine download from a free public CDN ([jsDelivr](https://www.jsdelivr.com/), serving the
+pinned [`@bentopdf/libreoffice-wasm`](https://www.npmjs.com/package/@bentopdf/libreoffice-wasm)
+build; the driver is the vendored MPL-2.0 wrapper in `public/libreoffice/` — see its
+`NOTICE.md`). The engine is kept in the browser's cache, so afterwards it converts with no
+network at all. It is real LibreOffice, so the PDF is vector, the layout is Word's, and the
+fill boxes land in the document's real ruled cells — just slowly on long documents, which is
+what the converter service remains for.
+
+The approximate in-browser route is a rough working copy, not a substitute: it is never used
+automatically. And with no engine and no converter, open the PDF that Word itself produces
+(below) — that needs nothing at all.
 
 ### Deliberately not Microsoft
 
@@ -123,7 +132,9 @@ it is served from the same address, so there is nothing to configure. The home s
 > the app from `http://<the converter's address>:8787` puts the app and the converter on one
 > address and the restriction does not apply. A converter on the *same* machine as the browser
 > can be reached from the hosted app, though Chrome may first ask whether the site may reach
-> devices on your local network — allow it.
+> devices on your local network — allow it. (The hosted copy is never left without exact
+> conversion either way: with no converter reachable it uses the LibreOffice engine inside the
+> website itself — slower, but exact.)
 
 The converter proves itself on start-up by converting a test document before it reports as
 ready. A LibreOffice that starts but cannot open documents — `libreoffice-core` installed
@@ -160,34 +171,54 @@ Two ways to close that gap, both legitimate:
 `npm run check` lists what is still missing on any machine, and the app shows the
 same list in a banner above a document it converted without them.
 
-### LibreOffice on the device (experimental, and slow)
+### LibreOffice inside the website (on by default)
 
 The same engine compiled to WebAssembly, run in the browser: no converter
-machine, no install, and it works with no network once cached. It is off unless
-an address is set under Settings → *LibreOffice on this device*, because the
-engine is ~237 MB and cannot live in this repository (git refuses files over
-100 MB) — host the four `soffice.*` files plus `browser.js` and point the app at
-them.
+machine, no install, and it works with no network once cached. It is **on by
+default** — when no converter service is reachable, the app fetches the engine
+and converts exactly instead of refusing the document.
+
+How the pieces are hosted, since the engine is ~247 MB and cannot live in this
+repository (git refuses files over 100 MB), nor on a free CDN as-is (jsDelivr
+stops at 50 MB per file):
+
+- **The wrapper** that drives the engine (`browser.js` +
+  `browser.worker.global.js` from
+  [`@matbee/libreoffice-converter`](https://www.npmjs.com/package/@matbee/libreoffice-converter),
+  MPL-2.0, ~184 KB) is vendored in `public/libreoffice/` and ships with the
+  app — see `public/libreoffice/NOTICE.md`.
+- **The engine binaries** come from the pinned
+  [`@bentopdf/libreoffice-wasm`](https://www.npmjs.com/package/@bentopdf/libreoffice-wasm)
+  package on jsDelivr — the identical build with the two big files gzipped so
+  every file clears the CDN limit (~78 MB total). The app decompresses them
+  with the browser's `DecompressionStream`, hands the engine same-origin
+  `blob:` URLs, and keeps the compressed files in the Cache API so the
+  download happens once per device. A self-hosted copy can be named in
+  Settings for a network that cannot reach the CDN.
 
 The page must be **cross-origin isolated** (`Cross-Origin-Opener-Policy:
 same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) because the build
-uses threads. `npm run serve --isolate` sets those headers. **GitHub Pages
-cannot set headers at all**, so the hosted copy of the app cannot use this route.
+uses threads. Every way the app is served now arranges that by itself: the dev
+server and `vite preview` send the headers, `npm run serve` sends them (pass
+`--no-isolate` to turn that off), and on a host that cannot set headers at all
+— **GitHub Pages** — the app's service worker injects them and the page
+reloads itself once, after which the engine runs on the hosted copy too.
 
 **Measured, on the same machine, against the converter service:**
 
-| Document | On the device (WASM) | Converter service |
+| Document | In the website (WASM) | Converter service |
 |---|---|---|
 | 1-page test | 1.4 s | 0.1 s |
 | AEI 3.4000 (34 pages) | did not finish in 5 min | 1.7 s |
 | AEI 3.3301 (65 pages) | did not finish in 30 min | 3.9 s |
 
-It converts correctly — a real PDF, from real LibreOffice — but the procedures
-this app exists for are far past what it can do in a usable time, and a tablet
-is slower than the machine those numbers came from. The converter service
-remains the answer for the AEI documents. The engine also carries its own fonts
-and cannot see the ones installed on the device, so Verdana, Segoe UI and MS
-Gothic are substituted on every device alike.
+It converts correctly — a real PDF, from real LibreOffice — but the long AEI
+procedures are far past what it can do in a usable time, and a tablet is
+slower than the machine those numbers came from. The converter service remains
+the answer for those documents; the in-website engine is what makes a short
+form open exactly on a device with no converter anywhere. The engine also
+carries its own fonts and cannot see the ones installed on the device, so
+Verdana, Segoe UI and MS Gothic are substituted on every device alike.
 
 ### No converter, and the layout still has to be exact
 
@@ -195,13 +226,16 @@ Save the PDF from Word itself: **File → Save as → PDF**, then open that PDF 
 own rendering, so the layout is exact and the text stays selectable, and the app fills PDFs
 without converting anything.
 
-**A Word file is opened exactly or not at all.** With no converter reachable, ASAaei refuses the
-document and offers those two routes — it does not rebuild it in the browser. An approximate
-rebuild moves ruled cells, column widths, headers and page breaks; a controlled document that
-has moved is not a rougher copy of itself, it is a different document, and no warning banner
-makes one safe to sign or file. The in-browser route still exists for a rough working copy, but
-only for someone who selects **Approximate copy in the browser** in Settings, and the result is
-labelled as not the original wherever it is shown.
+**A Word file is opened exactly or not at all.** With no converter service reachable, the
+engine inside the website does the conversion — same LibreOffice, exact layout, just slower.
+Only when that engine is switched off in Settings, or the page genuinely cannot run it (a plain
+`http://` address on another machine is not a secure context, so the browser withholds the
+threading the engine needs), does ASAaei refuse the document and offer these routes — it does
+not rebuild it in the browser. An approximate rebuild moves ruled cells, column widths, headers
+and page breaks; a controlled document that has moved is not a rougher copy of itself, it is a
+different document, and no warning banner makes one safe to sign or file. The in-browser route
+still exists for a rough working copy, but only for someone who selects **Approximate copy in
+the browser** in Settings, and the result is labelled as not the original wherever it is shown.
 
 > `python3-uno` is what makes it fast. It lets the server keep LibreOffice warm and hand it
 > documents over a socket, instead of starting LibreOffice from scratch for every file (which costs
@@ -286,6 +320,8 @@ One screen, reachable from the home header:
 - **Your details** — name and SAP ID, filled into forms automatically.
 - **How to convert** — Automatic (recommended), Always use the converter, or Always convert in the
   browser.
+- **LibreOffice inside the website** — on by default; switch it off, or point it at a
+  self-hosted copy of the engine files for a network that cannot reach the CDN.
 - **PDF quality** — smaller file / balanced / best quality. This only changes how photographs and
   logos are compressed; text, tables and lines are vector in every setting.
 - **Converter address** — leave blank to find it automatically; set it when the converter runs on

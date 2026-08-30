@@ -36,11 +36,12 @@ const HOST = args.host || process.env.HOST || '0.0.0.0'
 const STATIC_DIR = path.resolve(args.static || process.env.STATIC_DIR || path.join(ROOT, 'dist'))
 const MAX_UPLOAD = Number(args['max-upload'] || process.env.MAX_UPLOAD || 80) * 1024 * 1024
 const POOL_SIZE = Number(args.workers || process.env.WORKERS || 0) || undefined
-// Serve the app cross-origin isolated. The in-browser LibreOffice engine is
+// Serve the app cross-origin isolated. The in-website LibreOffice engine is
 // built with threads, so the browser only hands it SharedArrayBuffer on a page
-// carrying these headers. Off by default: isolation also refuses cross-origin
-// subresources that do not opt in, and the app does not need it otherwise.
-const ISOLATE = Boolean(args.isolate || process.env.ISOLATE === '1')
+// carrying these headers. ON by default — the app is self-contained and its
+// cross-origin traffic is all CORS, so isolation costs nothing here and makes
+// the engine work out of the box. --no-isolate (or ISOLATE=0) turns it off.
+const ISOLATE = !(args['no-isolate'] || process.env.ISOLATE === '0')
 
 const log = (msg) => console.log(`[asaaei] ${msg}`)
 

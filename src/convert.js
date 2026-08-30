@@ -8,7 +8,7 @@ import {
   convertViaService, discoverConverter, ConverterUnavailableError, converterRequired,
   approximationAllowed,
 } from './converter.js'
-import { convertViaWasm, wasmConfigured, WasmEngineError } from './wasmConverter.js'
+import { convertViaWasm, wasmAvailable, WasmEngineError } from './wasmConverter.js'
 
 // Refusing to approximate a Word document is a decision, not a failure, so it
 // travels as its own error type — the UI answers it with the two exact routes
@@ -191,10 +191,10 @@ export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.
   } catch (err) {
     if (!(err instanceof ConverterUnavailableError)) throw err
 
-    // No service. If the device carries the engine itself, that is the same
-    // LibreOffice doing the same job, so try it before giving up — this is the
-    // route that needs no server and works with no network at all.
-    if (wasmConfigured()) {
+    // No service. The website carries the engine itself — the same LibreOffice
+    // doing the same job — so use it before giving up: this is the route that
+    // needs no server and, once cached, works with no network at all.
+    if (wasmAvailable()) {
       try {
         onProgress?.(0, 0, { stage: 'wasm' })
         const out = await convertViaWasm(new Uint8Array(arrayBuffer), filename, {
