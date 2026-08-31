@@ -24,15 +24,17 @@ has three routes and picks the best reachable one automatically:
 | PDF text | Selectable (vector) | Selectable (vector) | Flat page images |
 | Speed (35-page form) | **~1.7 s** | seconds on a desktop; longer on tablets and image-heavy documents | ~30 s+ |
 | Field boxes | From the document's own ruled cells | From the document's own ruled cells | Measured off a re-flowed HTML copy |
-| Needs | LibreOffice on one machine | Nothing — a one-time ~78 MB download, then works offline | Nothing |
+| Needs | LibreOffice on one machine | Nothing — a one-time ~74 MB download from the site itself, then works offline | Nothing |
 | Used | Whenever it is reachable | Automatically when no service is reachable | Only if selected in Settings |
 
 **Out of the box the app converts exactly with nothing installed**: the website carries the
-LibreOffice engine itself (WebAssembly). The first Word document triggers a one-time ~78 MB
-engine download from a free public CDN ([jsDelivr](https://www.jsdelivr.com/), serving the
-pinned [`@bentopdf/libreoffice-wasm`](https://www.npmjs.com/package/@bentopdf/libreoffice-wasm)
-build; the driver is the vendored MPL-2.0 wrapper in `public/libreoffice/` — see its
-`NOTICE.md`). The engine is kept in the browser's cache, so afterwards it converts with no
+LibreOffice engine itself (WebAssembly), bundled in `public/libreoffice-engine/` and served
+from the same origin as the app. The first Word document triggers a one-time ~74 MB engine
+download from the site itself (the pinned
+[`@bentopdf/libreoffice-wasm`](https://www.npmjs.com/package/@bentopdf/libreoffice-wasm)
+build on [jsDelivr](https://www.jsdelivr.com/) stays as an automatic fallback; the driver is
+the vendored MPL-2.0 wrapper in `public/libreoffice/` — see the `NOTICE.md` in each
+directory). The engine is kept in the browser's cache, so afterwards it converts with no
 network at all. It is real LibreOffice, so the PDF is vector, the layout is Word's, and the
 fill boxes land in the document's real ruled cells — just slowly on long documents, which is
 what the converter service remains for.
@@ -178,23 +180,28 @@ machine, no install, and it works with no network once cached. It is **on by
 default** — when no converter service is reachable, the app fetches the engine
 and converts exactly instead of refusing the document.
 
-How the pieces are hosted, since the engine is ~247 MB and cannot live in this
-repository (git refuses files over 100 MB), nor on a free CDN as-is (jsDelivr
-stops at 50 MB per file):
+How the pieces are hosted. Uncompressed the engine is ~247 MB and cannot live
+in this repository (git refuses files over 100 MB) — but gzipped its largest
+file is ~47 MB, so the compressed engine ships with the app:
 
 - **The wrapper** that drives the engine (`browser.js` +
   `browser.worker.global.js` from
   [`@matbee/libreoffice-converter`](https://www.npmjs.com/package/@matbee/libreoffice-converter),
   MPL-2.0, ~184 KB) is vendored in `public/libreoffice/` and ships with the
   app — see `public/libreoffice/NOTICE.md`.
-- **The engine binaries** come from the pinned
+- **The engine binaries** are vendored in `public/libreoffice-engine/` (the
+  assets of the pinned
   [`@bentopdf/libreoffice-wasm`](https://www.npmjs.com/package/@bentopdf/libreoffice-wasm)
-  package on jsDelivr — the identical build with the two big files gzipped so
-  every file clears the CDN limit (~78 MB total). The app decompresses them
-  with the browser's `DecompressionStream`, hands the engine same-origin
-  `blob:` URLs, and keeps the compressed files in the Cache API so the
-  download happens once per device. A self-hosted copy can be named in
-  Settings for a network that cannot reach the CDN.
+  build, the two big files gzipped, ~74 MB total — see that directory's
+  `NOTICE.md`) and served from the same origin as the app. The identical
+  build on jsDelivr is tried automatically if the bundled copy is missing.
+  The app decompresses the files with the browser's `DecompressionStream`,
+  hands the engine same-origin `blob:` URLs, and keeps the compressed files
+  in the Cache API so the download happens once per device — they are
+  deliberately NOT in the service worker's precache, so only devices that
+  actually open a Word document without a converter pay the 74 MB. A
+  self-hosted copy can still be named in Settings, which then replaces both
+  sources.
 
 The page must be **cross-origin isolated** (`Cross-Origin-Opener-Policy:
 same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) because the build

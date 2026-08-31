@@ -147,10 +147,10 @@ export default function Settings({ onExit, profile, onProfile }) {
           <legend>LibreOffice inside the website</legend>
           <p className="settinghelp">
             The same LibreOffice, compiled to WebAssembly and run inside this page — nothing to
-            install and no converter machine. When no converter is reachable, the app fetches
-            the engine (a one-time ~78 MB download from a free public CDN), keeps it on this
-            device, and converts Word documents exactly — after the first download it works
-            with no network at all.
+            install and no converter machine. The engine ships with the app itself: when no
+            converter is reachable, the app fetches it from this site (a one-time ~74 MB
+            download), keeps it on this device, and converts Word documents exactly — after
+            the first download it works with no network at all.
           </p>
           <label className={'radiorow' + (settings.deviceEngine !== 'off' ? ' on' : '')}>
             <input type="checkbox"
@@ -186,10 +186,10 @@ export default function Settings({ onExit, profile, onProfile }) {
           <details className="settinghelpbox">
             <summary>Engine files address (advanced)</summary>
             <p className="settinghelp">
-              Leave blank to use the built-in source ({DEFAULT_ENGINE_ASSETS}). Set it when
-              this network cannot reach the CDN: copy the engine files to any web server and
-              give their address here. Both the compressed (.wasm.gz/.data.gz) and plain
-              layouts are accepted.
+              Leave blank to use the copy bundled with the app (with {DEFAULT_ENGINE_ASSETS}{' '}
+              as automatic fallback). Set an address only to force a specific copy: point it
+              at any web server holding the engine files. Both the compressed
+              (.wasm.gz/.data.gz) and plain layouts are accepted.
             </p>
             <div className="worow">
               <input className="woinput" placeholder={DEFAULT_ENGINE_ASSETS}

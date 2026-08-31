@@ -4,7 +4,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { gzipSync } from 'node:zlib'
-import { candidateNames, isGzip, gunzip, DEFAULT_ENGINE_ASSETS } from './wasmConverter.js'
+import {
+  candidateNames, isGzip, gunzip,
+  DEFAULT_ENGINE_ASSETS, BUNDLED_ENGINE_DIR, engineAssetsBases,
+} from './wasmConverter.js'
 
 test('big engine files try the compressed name first, then plain', () => {
   assert.deepEqual(candidateNames('soffice.wasm'), ['soffice.wasm.gz', 'soffice.wasm'])
@@ -29,11 +32,26 @@ test('gunzip round-trips real gzip bytes', async () => {
   assert.deepEqual(out, original)
 })
 
-test('the built-in engine source is a pinned https directory', () => {
+test('the CDN fallback source is a pinned https directory', () => {
   // A "latest" tag could change the engine — and therefore a controlled
-  // document's layout — without anyone deciding that. The default must name
+  // document's layout — without anyone deciding that. The fallback must name
   // an exact version, over https, ending in / so file names append cleanly.
   assert.match(DEFAULT_ENGINE_ASSETS, /^https:\/\//)
   assert.match(DEFAULT_ENGINE_ASSETS, /@\d+\.\d+\.\d+\//)
   assert.ok(DEFAULT_ENGINE_ASSETS.endsWith('/'))
+})
+
+test('by default the engine bundled with the app is tried before the CDN', () => {
+  const bases = engineAssetsBases('', 'https://example.github.io/asaaei/')
+  assert.deepEqual(bases, [
+    `https://example.github.io/asaaei/${BUNDLED_ENGINE_DIR}`,
+    DEFAULT_ENGINE_ASSETS,
+  ])
+})
+
+test('an address set in Settings replaces every other source', () => {
+  // Whoever set an address wants exactly that copy — silently falling back
+  // to another source would convert with an engine they did not choose.
+  const bases = engineAssetsBases('https://files.example.com/engine', 'https://example.github.io/')
+  assert.deepEqual(bases, ['https://files.example.com/engine/'])
 })

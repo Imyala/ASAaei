@@ -39,13 +39,13 @@ const DEFAULTS = {
   url: '',
   quality: 'balanced',
   // The LibreOffice engine that runs inside the website (wasmConverter.js).
-  // 'on' by default: when no converter service is reachable, the engine is
-  // fetched from the built-in CDN source and the document still converts
-  // exactly. 'off' restores the old refuse-and-explain behaviour.
+  // 'on' by default: when no converter service is reachable, the engine that
+  // ships with the app is fetched and the document still converts exactly.
+  // 'off' restores the old refuse-and-explain behaviour.
   deviceEngine: 'on',
-  // Where the engine files are hosted. Empty means the built-in source
-  // (DEFAULT_ENGINE_ASSETS in wasmConverter.js); set it to a self-hosted copy
-  // when this network cannot reach the CDN.
+  // Where the engine files are hosted. Empty means the copy bundled with the
+  // app, falling back to the pinned CDN build (see engineAssetsBases in
+  // wasmConverter.js); set it to force a specific self-hosted copy.
   wasmUrl: '',
 }
 

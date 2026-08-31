@@ -62,6 +62,12 @@ const MIME = {
   '.webmanifest': 'application/manifest+json',
   '.pdf': 'application/pdf',
   '.txt': 'text/plain; charset=utf-8',
+  // The bundled LibreOffice engine (public/libreoffice-engine/). Served as
+  // plain bytes, no Content-Encoding: the app detects gzip by content and
+  // decompresses in the browser, so the compressed file must arrive as-is.
+  '.gz': 'application/gzip',
+  '.wasm': 'application/wasm',
+  '.data': 'application/octet-stream',
 }
 
 // The app may be opened from a different origin than the converter (a tablet

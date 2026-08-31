@@ -9,15 +9,17 @@
 //
 // WHERE THE ENGINE COMES FROM
 // The engine is ~247 MB uncompressed (a 147 MB .wasm plus a 100 MB data file
-// holding its fonts and configuration), which is past what this repository can
-// hold (git refuses files over 100 MB) and past what free CDNs will serve as
-// single files (jsDelivr stops at 50 MB). The answer is the build published as
-// @bentopdf/libreoffice-wasm on npm — the identical engine with the two big
-// files gzipped, every file under the CDN limit — which the app downloads
-// (~78 MB), decompresses with the browser's own DecompressionStream, and keeps
-// in the Cache API so the download happens once, not per document. A
-// self-hosted copy can be named in Settings instead, for a network that cannot
-// reach the CDN; both compressed and uncompressed layouts are accepted.
+// holding its fonts and configuration) — past git's 100 MB per-file limit.
+// Gzipped, however, the largest file is ~47 MB, so the compressed engine
+// travels WITH the app: public/libreoffice-engine/ carries the assets of
+// @bentopdf/libreoffice-wasm 2.3.1 (see NOTICE.md there), served from the
+// same origin as the page. The app decompresses them with the browser's own
+// DecompressionStream and keeps them in the Cache API, so even the same-origin
+// fetch happens once, not per document. Two other sources cover the edges:
+// the identical build on jsDelivr is the automatic fallback (a deployment
+// that lost the bundled files still converts), and a self-hosted address can
+// be set in Settings, which then replaces both; compressed and uncompressed
+// layouts are accepted from any source.
 //
 // WHY EVERYTHING BECOMES A blob: URL
 // Workers can only be created same-origin, and the engine spawns several (it
@@ -46,11 +48,18 @@ export class WasmEngineError extends Error {
   }
 }
 
-// The engine build used when no self-hosted address is set in Settings.
-// Version-pinned so a converted document is reproducible: a "latest" tag could
-// change the engine — and therefore the layout — under a controlled document.
-// This is the build BentoPDF publishes for exactly this purpose (LibreOffice
-// via @matbee/libreoffice-converter, MPL-2.0), served by jsDelivr, a free CDN
+// Where the engine that ships with the app lives, relative to the page. The
+// files there are the assets of the pinned npm build below, byte for byte —
+// bundled and CDN copies must stay the same version, because a converted
+// document's layout must not depend on which source happened to answer.
+export const BUNDLED_ENGINE_DIR = 'libreoffice-engine/'
+
+// The same engine build on a CDN — the automatic fallback for a deployment
+// that predates (or lost) the bundled copy. Version-pinned so a converted
+// document is reproducible: a "latest" tag could change the engine — and
+// therefore the layout — under a controlled document. This is the build
+// BentoPDF publishes for exactly this purpose (LibreOffice via
+// @matbee/libreoffice-converter, MPL-2.0), served by jsDelivr, a free CDN
 // for public npm packages.
 export const DEFAULT_ENGINE_ASSETS =
   'https://cdn.jsdelivr.net/npm/@bentopdf/libreoffice-wasm@2.3.1/assets/'
@@ -103,11 +112,21 @@ export function isolationProblem() {
   return ''
 }
 
-// Where the engine files are fetched from: the address in Settings, or the
-// built-in CDN source. Exported for the Settings screen.
+// The engine sources, in the order they are tried. Pure — both inputs are
+// arguments — so the ordering is testable in Node. An address set in
+// Settings replaces the whole list: whoever set it wants exactly that copy.
+// Otherwise the copy bundled with the app comes first (same origin, no CDN,
+// works on a network that can reach only the app itself) and the identical
+// build on the CDN is the fallback.
+export function engineAssetsBases(settingsUrl, baseURI) {
+  const url = (settingsUrl || '').trim()
+  if (url) return [url.endsWith('/') ? url : `${url}/`]
+  return [new URL(BUNDLED_ENGINE_DIR, baseURI).href, DEFAULT_ENGINE_ASSETS]
+}
+
+// The address the engine will try first. Exported for the Settings screen.
 export function engineAssetsBase() {
-  const url = (getConverterSettings().wasmUrl || '').trim() || DEFAULT_ENGINE_ASSETS
-  return url.endsWith('/') ? url : `${url}/`
+  return engineAssetsBases(getConverterSettings().wasmUrl, document.baseURI)[0]
 }
 
 // ---- fetching the engine ---------------------------------------------------
@@ -156,11 +175,14 @@ async function fetchEngineFile(base, name, { onProgress, signal } = {}) {
         const mb = done >> 20
         if (mb === lastMb) return
         lastMb = mb
+        // Clamped: a server that transparently decompresses (Content-Encoding:
+        // gzip) streams MORE bytes than its compressed Content-Length claims,
+        // and a bar past 100% reads as broken.
         onProgress?.(fromCache
           ? `Preparing the LibreOffice engine (${name})…`
-          : `Downloading the LibreOffice engine — ${name}, ${MB(done)}${total ? ` of ${MB(total)}` : ''}. `
+          : `Downloading the LibreOffice engine — ${name}, ${MB(done)}${total && done <= total ? ` of ${MB(total)}` : ''}. `
             + 'This happens once; afterwards it is kept on this device.',
-        total ? done / total : null)
+        total ? Math.min(done / total, 1) : null)
       }, signal)
       if (!fromCache && cache) {
         // Cache AFTER the body arrived intact, keyed by the real URL so a
@@ -173,10 +195,10 @@ async function fetchEngineFile(base, name, { onProgress, signal } = {}) {
       lastErr = err
     }
   }
+  // Factual, per-file: which file, which source, what went wrong. The advice
+  // about what to do lives in loadEngine, which knows how many sources failed.
   throw new WasmEngineError(
-    `The engine file ${name} could not be fetched from ${base} `
-    + `(${lastErr?.message || 'no candidate answered'}). If this device cannot reach the `
-    + 'CDN, host the engine files yourself and set the address in Settings.')
+    `${name} could not be fetched from ${base} (${lastErr?.message || 'no candidate answered'})`)
 }
 
 // Cache API access that degrades to "no cache" instead of failing the load —
@@ -235,7 +257,21 @@ async function loadEngine({ onProgress, signal } = {}) {
   if (onProgress) progressSink.report = onProgress
   const blocked = isolationProblem()
   if (blocked) throw new WasmEngineError(blocked)
-  const base = engineAssetsBase()
+  const bases = engineAssetsBases(getConverterSettings().wasmUrl, document.baseURI)
+  // The bundled and CDN copies are byte-identical (same pinned version), so a
+  // source this device has already cached wins: a device that cached the CDN
+  // copy before the engine was bundled with the app must not download ~74 MB
+  // again just because the preferred source changed.
+  const cache = await openEngineCache()
+  if (cache && bases.length > 1) {
+    for (const b of bases) {
+      if (await cache.match(`${b}soffice.wasm.gz`).catch(() => null)) {
+        bases.splice(bases.indexOf(b), 1)
+        bases.unshift(b)
+        break
+      }
+    }
+  }
 
   // The wrapper travels with the app — it is small, versioned with the code,
   // and works offline. Only the engine binaries come from the CDN.
@@ -257,19 +293,44 @@ async function loadEngine({ onProgress, signal } = {}) {
   // buffer is dropped the moment its blob exists: keeping ~250 MB of
   // decompressed engine alive next to the running engine is exactly the
   // memory pressure that pushes a modest laptop into swapping — and a
-  // swapping machine reads as "the app froze".
-  let bytes = await fetchEngineFile(base, 'soffice.js', { onProgress: emit, signal })
-  const jsUrl = blobUrl(bytes, 'text/javascript')
-  bytes = await fetchEngineFile(base, 'soffice.worker.js', { onProgress: emit, signal })
-  const workerUrl = blobUrl(bytes, 'text/javascript')
-  bytes = await fetchEngineFile(base, 'soffice.data', { onProgress: emit, signal })
-  const dataUrl = blobUrl(bytes, 'application/octet-stream')
-  bytes = await fetchEngineFile(base, 'soffice.wasm', { onProgress: emit, signal })
-  const wasmUrl = blobUrl(bytes, 'application/wasm')
-  bytes = null
+  // swapping machine reads as "the app froze". All four files come from ONE
+  // source: mixing files across sources could pair a wasm with another
+  // version's data file, and the failure would be deep inside the engine.
+  const ENGINE_FILES = ['soffice.js', 'soffice.worker.js', 'soffice.data', 'soffice.wasm']
+  const FILE_TYPES = ['text/javascript', 'text/javascript', 'application/octet-stream', 'application/wasm']
+  const loadFilesFrom = async (base) => {
+    const urls = []
+    try {
+      for (let i = 0; i < ENGINE_FILES.length; i++) {
+        let bytes = await fetchEngineFile(base, ENGINE_FILES[i], { onProgress: emit, signal })
+        urls.push(blobUrl(bytes, FILE_TYPES[i]))
+        bytes = null
+      }
+      return urls
+    } catch (err) {
+      for (const u of urls) URL.revokeObjectURL(u)
+      throw err
+    }
+  }
+  let files = null
+  let lastErr = null
+  for (const base of bases) {
+    try { files = await loadFilesFrom(base); break } catch (err) {
+      if (err?.name === 'AbortError') throw err
+      lastErr = err
+    }
+  }
+  if (!files) {
+    throw new WasmEngineError(bases.length > 1
+      ? `The engine could not be loaded from the app itself or from the CDN (${lastErr?.message}). `
+        + 'Redeploy the app if public/libreoffice-engine/ is missing from the deployment, or '
+        + 'host the engine files yourself and set the address in Settings.'
+      : `The engine could not be loaded from the address set in Settings (${lastErr?.message}). `
+        + 'Fix or clear that address in Settings — cleared, the copy bundled with the app is used.')
+  }
+  const [jsUrl, workerUrl, dataUrl, wasmUrl] = files
   pruneEngineCache(
-    ['soffice.js', 'soffice.worker.js', 'soffice.data', 'soffice.wasm']
-      .flatMap((n) => candidateNames(n).map((c) => `${base}${c}`)),
+    bases.flatMap((b) => ENGINE_FILES.flatMap((n) => candidateNames(n).map((c) => `${b}${c}`))),
   ).catch(() => {})
   if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
 

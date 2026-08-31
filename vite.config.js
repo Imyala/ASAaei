@@ -59,6 +59,12 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
+        // The LibreOffice engine bundled in public/libreoffice-engine/ is
+        // fetched lazily — the first time a Word document actually needs it —
+        // and kept in its own Cache API cache (see src/wasmConverter.js).
+        // Precaching it would force ~74 MB onto every visitor at install
+        // time, Word user or not.
+        globIgnores: ['libreoffice-engine/**'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       },
     }),

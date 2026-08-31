@@ -21,9 +21,7 @@ source form — this file *is* the distributed source):
 - Source: https://github.com/matbeedotcom/libreoffice-document-converter
 
 The engine binaries themselves (soffice.js / soffice.wasm / soffice.data /
-soffice.worker.js — LibreOffice, also MPL-2.0) are not in this repository:
-they are fetched at run time from the address configured in
-`src/wasmConverter.js` (by default the
+soffice.worker.js — LibreOffice, also MPL-2.0) ship with the app in
+`public/libreoffice-engine/` (see the NOTICE.md there), with the same build's
 [@bentopdf/libreoffice-wasm](https://www.npmjs.com/package/@bentopdf/libreoffice-wasm)
-package on jsDelivr, which publishes the same build with the two large files
-gzip-compressed to fit CDN size limits).
+publication on jsDelivr as an automatic fallback.
