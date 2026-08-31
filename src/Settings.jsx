@@ -174,11 +174,12 @@ export default function Settings({ onExit, profile, onProfile }) {
             </small>
           )}
           <p className="convwarn">
-            <b>Slow for a long procedure.</b> Measured against the converter service on the
-            same machine: a one-page document took 1.4 s here versus 0.1 s there, and
-            multi-page AEI procedures take many minutes that the service converts in under 4
-            seconds. For the long procedures, the converter service is still the answer —
-            this route is for a device that has no reachable converter at all.
+            <b>Slower than the converter service.</b> Typical forms convert in seconds on a
+            desktop; an image-heavy procedure on a modest laptop can take minutes that the
+            service does in under 4 seconds. The screen counts the elapsed time while it
+            works, and Cancel stops it at once. Where a converter machine can be kept
+            running, it is still the better route — this one is for a device with no
+            reachable converter at all.
           </p>
           <details className="settinghelpbox">
             <summary>Engine files address (advanced)</summary>

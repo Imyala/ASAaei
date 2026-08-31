@@ -253,11 +253,20 @@ async function loadEngine({ onProgress, signal } = {}) {
   }
 
   // Engine files, largest last so an unreachable source fails fast on the
-  // small loader script instead of after minutes of download.
-  const js = await fetchEngineFile(base, 'soffice.js', { onProgress: emit, signal })
-  const workerJs = await fetchEngineFile(base, 'soffice.worker.js', { onProgress: emit, signal })
-  const data = await fetchEngineFile(base, 'soffice.data', { onProgress: emit, signal })
-  const wasm = await fetchEngineFile(base, 'soffice.wasm', { onProgress: emit, signal })
+  // small loader script instead of after minutes of download. Each byte
+  // buffer is dropped the moment its blob exists: keeping ~250 MB of
+  // decompressed engine alive next to the running engine is exactly the
+  // memory pressure that pushes a modest laptop into swapping — and a
+  // swapping machine reads as "the app froze".
+  let bytes = await fetchEngineFile(base, 'soffice.js', { onProgress: emit, signal })
+  const jsUrl = blobUrl(bytes, 'text/javascript')
+  bytes = await fetchEngineFile(base, 'soffice.worker.js', { onProgress: emit, signal })
+  const workerUrl = blobUrl(bytes, 'text/javascript')
+  bytes = await fetchEngineFile(base, 'soffice.data', { onProgress: emit, signal })
+  const dataUrl = blobUrl(bytes, 'application/octet-stream')
+  bytes = await fetchEngineFile(base, 'soffice.wasm', { onProgress: emit, signal })
+  const wasmUrl = blobUrl(bytes, 'application/wasm')
+  bytes = null
   pruneEngineCache(
     ['soffice.js', 'soffice.worker.js', 'soffice.data', 'soffice.wasm']
       .flatMap((n) => candidateNames(n).map((c) => `${base}${c}`)),
@@ -268,10 +277,10 @@ async function loadEngine({ onProgress, signal } = {}) {
 
   // Everything becomes a same-origin blob: URL — see the header comment.
   const converter = new WorkerBrowserConverter({
-    sofficeJs: blobUrl(js, 'text/javascript'),
-    sofficeWasm: blobUrl(wasm, 'application/wasm'),
-    sofficeData: blobUrl(data, 'application/octet-stream'),
-    sofficeWorkerJs: blobUrl(workerJs, 'text/javascript'),
+    sofficeJs: jsUrl,
+    sofficeWasm: wasmUrl,
+    sofficeData: dataUrl,
+    sofficeWorkerJs: workerUrl,
     // The wrapper's own worker: same origin, so its URL is passed straight
     // through. Runs the conversion off the main thread — the page stays
     // responsive while LibreOffice grinds.
@@ -285,6 +294,10 @@ async function loadEngine({ onProgress, signal } = {}) {
       Number.isFinite(p?.percent) && p.percent > 0 ? p.percent / 100 : null),
   })
   await converter.initialize()
+  // The data file has been read into the engine's filesystem; its ~100 MB
+  // blob has no further reader, so give the memory back. The wasm and script
+  // blobs stay — the engine spawns threads later that load them again.
+  URL.revokeObjectURL(dataUrl)
   return { converter }
 }
 
@@ -326,13 +339,19 @@ export async function convertViaWasm(bytes, filename, { onProgress, signal } = {
   // tearing the engine down (the worker is terminated) is the only way, and
   // the next document simply starts it again.
   const started = Date.now()
+  // The count is in ticking seconds ON PURPOSE: a number that visibly climbs
+  // every few seconds is the difference between "working on it" and "frozen".
+  // If this counter ever stands still, the page itself has stalled — which is
+  // a machine-level problem (usually memory), not a quiet conversion.
+  const elapsed = () => {
+    const s = Math.round((Date.now() - started) / 1000)
+    return s < 120 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`
+  }
   const heartbeat = setInterval(() => {
-    if (Date.now() - lastAt < 9500) return
-    const mins = Math.floor((Date.now() - started) / 60000)
+    if (Date.now() - lastAt < 6000) return
     onProgress?.(
-      'Still converting — LibreOffice is laying the document out '
-      + `(${mins < 1 ? 'under a minute' : `${mins} min`} so far). `
-      + 'A long procedure takes a while on this route; the converter service does it in seconds.',
+      `Still converting — ${elapsed()} so far. LibreOffice is working through the document; `
+      + 'a long procedure takes a while on this route (the converter service does it in seconds).',
       lastFraction)
   }, 5000)
   const cancelNow = () => resetWasmEngine()

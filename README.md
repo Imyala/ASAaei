@@ -22,7 +22,7 @@ has three routes and picks the best reachable one automatically:
 |---|---|---|---|
 | Layout | **Identical to Word** | **Identical to Word** — same LibreOffice, compiled to WebAssembly | Approximated; text re-flows |
 | PDF text | Selectable (vector) | Selectable (vector) | Flat page images |
-| Speed (35-page form) | **~1.7 s** | minutes — fine for short forms | ~30 s+ |
+| Speed (35-page form) | **~1.7 s** | seconds on a desktop; longer on tablets and image-heavy documents | ~30 s+ |
 | Field boxes | From the document's own ruled cells | From the document's own ruled cells | Measured off a re-flowed HTML copy |
 | Needs | LibreOffice on one machine | Nothing — a one-time ~78 MB download, then works offline | Nothing |
 | Used | Whenever it is reachable | Automatically when no service is reachable | Only if selected in Settings |
@@ -204,21 +204,19 @@ server and `vite preview` send the headers, `npm run serve` sends them (pass
 — **GitHub Pages** — the app's service worker injects them and the page
 reloads itself once, after which the engine runs on the hosted copy too.
 
-**Measured, on the same machine, against the converter service:**
-
-| Document | In the website (WASM) | Converter service |
-|---|---|---|
-| 1-page test | 1.4 s | 0.1 s |
-| AEI 3.4000 (34 pages) | did not finish in 5 min | 1.7 s |
-| AEI 3.3301 (65 pages) | did not finish in 30 min | 3.9 s |
-
-It converts correctly — a real PDF, from real LibreOffice — but the long AEI
-procedures are far past what it can do in a usable time, and a tablet is
-slower than the machine those numbers came from. The converter service remains
-the answer for those documents; the in-website engine is what makes a short
-form open exactly on a device with no converter anywhere. The engine also
-carries its own fonts and cannot see the ones installed on the device, so
-Verdana, Segoe UI and MS Gothic are substituted on every device alike.
+**Speed.** Early measurements here were dismal (a 34-page procedure did not
+finish in 5 minutes) — that turned out to be the engine bundle shipping with
+LibreOffice's entire internal debug log switched on, formatting hundreds of
+thousands of lines during layout. With that silenced (see
+`public/libreoffice/NOTICE.md`), the same machine converts a 399-page ruled
+test form in ~15 s, engine start-up aside. Expect document- and
+device-dependent times: seconds for typical forms on a desktop, minutes for
+an image-heavy procedure on a modest laptop — the screen shows a ticking
+elapsed count the whole way, and Cancel stops it instantly. The converter
+service is still an order of magnitude faster and remains the right answer
+where one machine can be kept running. The engine also carries its own fonts
+and cannot see the ones installed on the device, so Verdana, Segoe UI and MS
+Gothic are substituted on every device alike.
 
 ### No converter, and the layout still has to be exact
 

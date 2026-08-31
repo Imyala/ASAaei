@@ -265,7 +265,11 @@ export default function App() {
             ? 'Converting in this browser. This is slower and the layout is approximate.'
             : '',
       progress: 0,
-      cancel: () => job.abort(),
+      // Cancel leaves NOW — the screen goes home on the click, not when the
+      // conversion pipeline gets around to noticing the abort. The abort
+      // signal tears the in-page engine down (its worker is terminated), and
+      // every late completion below checks the signal before touching state.
+      cancel: () => { job.abort(); setOpening(null); setScreen('home') },
     })
     setScreen('opening')
     setBusy('')
