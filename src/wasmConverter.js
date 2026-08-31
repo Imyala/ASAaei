@@ -310,6 +310,12 @@ export function getWasmEngine(opts) {
   return loading
 }
 
+// How long the engine may sit on the same reported step mid-conversion before
+// the app concludes it is stuck (not slow — stuck: the known stall bugs never
+// recover) and stops it. Long silent layout stretches are normal, so this is
+// generous; the documents that trip it would otherwise sit there for hours.
+export const STALL_LIMIT_MS = 240_000
+
 // Convert a Word document to PDF in this browser.
 //
 // Throws WasmEngineError when the engine is not usable — the caller treats
@@ -323,8 +329,35 @@ export async function convertViaWasm(bytes, filename, { onProgress, signal } = {
   // counting even while LibreOffice is deep in a silent layout stretch.
   const started = Date.now()
   let lastFraction = null
+
+  // The stall watchdog. Armed only while the actual conversion runs (the
+  // download and start-up report their own honest movement), re-armed every
+  // time the engine reports a NEW step, and fired only when nothing new has
+  // been said for STALL_LIMIT_MS. Documents that hit the engine's known stall
+  // bugs are refused up front (see docxEngineRisks); this is the backstop for
+  // a stall the scan could not foresee — without it the progress screen could
+  // sit on the same percentage forever.
+  let stallTimer = null
+  let stallReject = null
+  const stalled = new Promise((_, reject) => { stallReject = reject })
+  stalled.catch(() => {}) // never unhandled — only the race below consumes it
+  const armStall = () => {
+    clearTimeout(stallTimer)
+    stallTimer = setTimeout(() => {
+      resetWasmEngine() // terminate the worker — nothing else interrupts it
+      stallReject(new WasmEngineError(
+        `It reported no progress for ${Math.round(STALL_LIMIT_MS / 60000)} minutes, which with `
+        + 'this engine means stuck, not slow, so the app stopped it. Two ways that open the '
+        + 'document exactly, in seconds: save it as a PDF from Word (File → Save as → PDF) and '
+        + 'open that here, or start the converter service ("npm run serve").'))
+    }, STALL_LIMIT_MS)
+  }
+  let lastStep = ''
   const report = (message, fraction = null) => {
     if (Number.isFinite(fraction)) lastFraction = fraction
+    const step = `${message}|${Number.isFinite(fraction) ? fraction : ''}`
+    if (stallTimer && step !== lastStep) armStall()
+    lastStep = step
     onProgress?.(message, Number.isFinite(fraction) ? fraction : lastFraction, Date.now() - started)
   }
   progressSink.report = report
@@ -341,11 +374,18 @@ export async function convertViaWasm(bytes, filename, { onProgress, signal } = {
   const cancelNow = () => resetWasmEngine()
   signal?.addEventListener('abort', cancelNow, { once: true })
   try {
-    out = await converter.convert(input, { outputFormat: 'pdf' }, filename)
+    armStall()
+    out = await Promise.race([
+      converter.convert(input, { outputFormat: 'pdf' }, filename),
+      stalled,
+    ])
   } catch (err) {
     if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
+    if (err instanceof WasmEngineError) throw err
     throw new WasmEngineError(`LibreOffice could not convert this document: ${err.message}`)
   } finally {
+    clearTimeout(stallTimer)
+    stallTimer = null
     signal?.removeEventListener('abort', cancelNow)
   }
   const pdf = out?.data ? new Uint8Array(out.data) : new Uint8Array(out)

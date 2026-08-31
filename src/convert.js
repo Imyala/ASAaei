@@ -9,6 +9,7 @@ import {
   approximationAllowed,
 } from './converter.js'
 import { convertViaWasm, wasmAvailable, WasmEngineError } from './wasmConverter.js'
+import { docxEngineRisks } from './docxRisks.js'
 
 // Refusing to approximate a Word document is a decision, not a failure, so it
 // travels as its own error type — the UI answers it with the two exact routes
@@ -195,6 +196,23 @@ export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.
     // doing the same job — so use it before giving up: this is the route that
     // needs no server and, once cached, works with no network at all.
     if (wasmAvailable()) {
+      // Look inside the file FIRST for the two things that are known to stall
+      // this engine build forever (an EMF/WMF graphic; a picture in the page
+      // header or footer). A document carrying either would sit at "Loading
+      // document (30%)" indefinitely — so refuse in under a second, with the
+      // routes that work, instead of letting anyone watch a bar that will
+      // never move. The scan is advisory: if the bytes cannot be read as a
+      // zip it stays quiet and the engine's own error handling answers.
+      const risks = await docxEngineRisks(new Uint8Array(arrayBuffer)).catch(() => [])
+      if (risks.length) {
+        throw new ApproximateLayoutBlocked(
+          `This document contains ${risks.join(' and ')}. The LibreOffice engine inside this `
+          + 'page stalls on exactly that — the conversion would sit at the same percentage '
+          + 'forever — so the app stopped now instead of making you wait.\n\n'
+          + 'Two ways that open this document exactly, in seconds:\n'
+          + '• Open it in Word and use File → Save as → PDF, then open that PDF here.\n'
+          + '• Start the converter service ("npm run serve") — it handles these documents fine.')
+      }
       try {
         onProgress?.(0, 0, { stage: 'wasm' })
         const out = await convertViaWasm(new Uint8Array(arrayBuffer), filename, {

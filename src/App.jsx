@@ -270,6 +270,22 @@ export default function App() {
       // signal tears the in-page engine down (its worker is terminated), and
       // every late completion below checks the signal before touching state.
       cancel: () => { job.abort(); setOpening(null); setScreen('home') },
+      // The stall advisory's "stop now" — like Cancel it kills the engine,
+      // but it stays on this screen and says what to do instead, because a
+      // person watching a stuck bar wants the way out, not the home screen.
+      stop: () => {
+        job.keepError = true
+        job.abort()
+        setOpening((o) => o && ({
+          ...o,
+          stage: '',
+          error: 'Stopped. The LibreOffice engine inside this page was stuck on the same step '
+            + 'and was not going to finish this document.\n\n'
+            + 'Two ways that open it exactly, in seconds:\n'
+            + '• Open the file in Word and use File → Save as → PDF, then open that PDF here.\n'
+            + '• Start the converter service ("npm run serve") — it handles these documents fine.',
+        }))
+      },
     })
     setScreen('opening')
     setBusy('')
@@ -325,7 +341,9 @@ export default function App() {
     } catch (err) {
       if (job.signal.aborted || err?.name === 'AbortError') {
         // The user cancelled — that is not a failure, so no alarm about it.
-        setScreen('home')
+        // (Unless they pressed the stall screen's "stop": that abort keeps
+        // this screen, which is already showing them the ways out.)
+        if (!job.keepError) setScreen('home')
         return
       }
       // Report the failure on the opening screen rather than in an alert the
@@ -573,6 +591,14 @@ export default function App() {
           <h1>ASAaei</h1>
         </header>
         <section className="homecard openingcard">
+          <span className={'openingmark' + (opening.error ? ' error' : '')} aria-hidden="true">
+            <svg viewBox="0 0 44 44" width="40" height="40">
+              <rect x="8" y="4" width="28" height="36" rx="4" fill="#fff" stroke="currentColor" strokeWidth="1.6" opacity="0.9" />
+              <rect x="14" y="12" width="16" height="2.6" rx="1.3" fill="currentColor" />
+              <rect x="14" y="19" width="16" height="2.6" rx="1.3" fill="currentColor" opacity="0.45" />
+              <rect x="14" y="26" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.45" />
+            </svg>
+          </span>
           {opening.error ? (
             <>
               <h2 className="openingtitle error">Could not open this document</h2>
@@ -599,7 +625,7 @@ export default function App() {
               </div>
               {opening.engineStartedAt && (
                 <ConvertTimer startedAt={opening.engineStartedAt} pct={opening.progress}
-                  stageChangedAt={opening.stageChangedAt} />
+                  stageChangedAt={opening.stageChangedAt} onStop={opening.stop} />
               )}
               <p className="openingstage">{opening.stage}</p>
               {opening.detail && <p className="openingdetail">{opening.detail}</p>}
@@ -956,18 +982,19 @@ export default function App() {
 // keeps counting through a long silent layout stretch — a climbing number is
 // the difference between "working on it" and "frozen". The percentage beside
 // it is the engine's last reported stage position.
-function ConvertTimer({ startedAt, pct, stageChangedAt }) {
+function ConvertTimer({ startedAt, pct, stageChangedAt, onStop }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
   const s = Math.max(0, Math.floor((now - startedAt) / 1000))
-  // Same step for a long time → say so, and say why it can happen. Verified
-  // against this engine build: a picture in the page header or footer, or an
-  // EMF graphic, stalls its PDF export indefinitely (an upstream bug — the
-  // converter service handles the same documents in seconds). Slow is normal;
-  // this only speaks up when the engine has stopped reporting steps.
+  // Same step for a long time → say so, and offer the way out. Documents that
+  // hit the engine's verified stall bugs (an EMF graphic, a picture in the
+  // page header/footer) are refused before conversion even starts now, and
+  // the engine itself is stopped by a watchdog after four stalled minutes —
+  // so this advisory is the early warning in between: slow is normal, but a
+  // step that stopped moving deserves a button, not just patience.
   const stalledFor = stageChangedAt ? now - stageChangedAt : 0
   return (
     <>
@@ -975,15 +1002,22 @@ function ConvertTimer({ startedAt, pct, stageChangedAt }) {
         <b>{s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`}</b>
         {pct > 0 && <span className="openingtimer-pct">{Math.round(pct * 100)}%</span>}
       </div>
-      {stalledFor > 150000 && (
-        <p className="convwarn openingstall">
-          Stuck on the same step for {Math.floor(stalledFor / 60000)} minutes. Some documents
-          hit a known limit of the engine inside this page: a picture in the page header or
-          footer, or an EMF graphic, can stall it indefinitely — this document may never
-          finish here. Press Cancel and open it another way: the converter service handles
-          these documents in seconds, and a PDF saved from Word (File → Save as → PDF) opens
-          directly with nothing to install.
-        </p>
+      {stalledFor > 90000 && (
+        <div className="convwarn openingstall">
+          <p>
+            Stuck on the same step for {Math.max(1, Math.floor(stalledFor / 60000))}{' '}
+            {stalledFor >= 120000 ? 'minutes' : 'minute'}. Slow is normal for a long document,
+            but a step that has stopped moving usually never finishes — and if nothing changes,
+            the app will stop the engine by itself shortly. You don't have to wait: a PDF saved
+            from Word (File → Save as → PDF) opens here directly, and the converter service
+            handles these documents in seconds.
+          </p>
+          {onStop && (
+            <button className="stallstop" onClick={onStop}>
+              Stop now and show me those options
+            </button>
+          )}
+        </div>
       )}
     </>
   )
