@@ -214,7 +214,18 @@ device-dependent times: seconds for typical forms on a desktop, minutes for
 an image-heavy procedure on a modest laptop — the screen shows a ticking
 elapsed count the whole way, and Cancel stops it instantly. The converter
 service is still an order of magnitude faster and remains the right answer
-where one machine can be kept running. The engine also carries its own fonts
+where one machine can be kept running.
+
+**Known engine limit — images in headers, and EMF.** Bisected against real
+conversions: this WASM build's PDF export stalls **indefinitely** on a
+document with a picture in the page header or footer, or an EMF graphic
+anywhere (both engines published today — matbee 2.7.2 and BentoPDF 2.3.1 —
+behave the same; body photos and text-only headers are fine). Formal
+procedures often carry exactly that: a logo or classification box in the
+header. The app watches for it — when a conversion sits on one step for
+over 2½ minutes it says so on the opening screen and points at the routes
+that work: the converter service (which handles these documents in
+seconds) or the PDF Word itself saves. The engine also carries its own fonts
 and cannot see the ones installed on the device, so Verdana, Segoe UI and MS
 Gothic are substituted on every device alike.
 

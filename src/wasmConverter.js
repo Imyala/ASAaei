@@ -316,14 +316,16 @@ export function getWasmEngine(opts) {
 // that like any other missing converter, which means the document is refused
 // rather than approximated.
 export async function convertViaWasm(bytes, filename, { onProgress, signal } = {}) {
-  // Track the freshest message and fraction so the heartbeat below can repeat
-  // the last known position instead of blanking the bar.
-  let lastAt = Date.now()
+  // Progress is (message, fraction, elapsedMs). The last known fraction is
+  // repeated when a stage carries none, so the bar never jumps backwards; the
+  // elapsed clock starts here, so it covers the download and start-up too.
+  // The visible ticking counter lives in the UI on its own timer — it keeps
+  // counting even while LibreOffice is deep in a silent layout stretch.
+  const started = Date.now()
   let lastFraction = null
   const report = (message, fraction = null) => {
-    lastAt = Date.now()
     if (Number.isFinite(fraction)) lastFraction = fraction
-    onProgress?.(message, Number.isFinite(fraction) ? fraction : lastFraction)
+    onProgress?.(message, Number.isFinite(fraction) ? fraction : lastFraction, Date.now() - started)
   }
   progressSink.report = report
 
@@ -333,27 +335,9 @@ export async function convertViaWasm(bytes, filename, { onProgress, signal } = {
 
   const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   let out
-  // Laying out a long document is one long synchronous grind inside the
-  // worker with no callbacks, which read as "stuck at 30%". A heartbeat says
-  // it is alive and for how long; and Cancel must actually stop the grind —
-  // tearing the engine down (the worker is terminated) is the only way, and
-  // the next document simply starts it again.
-  const started = Date.now()
-  // The count is in ticking seconds ON PURPOSE: a number that visibly climbs
-  // every few seconds is the difference between "working on it" and "frozen".
-  // If this counter ever stands still, the page itself has stalled — which is
-  // a machine-level problem (usually memory), not a quiet conversion.
-  const elapsed = () => {
-    const s = Math.round((Date.now() - started) / 1000)
-    return s < 120 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`
-  }
-  const heartbeat = setInterval(() => {
-    if (Date.now() - lastAt < 6000) return
-    onProgress?.(
-      `Still converting — ${elapsed()} so far. LibreOffice is working through the document; `
-      + 'a long procedure takes a while on this route (the converter service does it in seconds).',
-      lastFraction)
-  }, 5000)
+  // Cancel must actually stop the grind: tearing the engine down (its worker
+  // is terminated) is the only way to interrupt LibreOffice mid-layout, and
+  // the next document simply starts a fresh engine.
   const cancelNow = () => resetWasmEngine()
   signal?.addEventListener('abort', cancelNow, { once: true })
   try {
@@ -362,7 +346,6 @@ export async function convertViaWasm(bytes, filename, { onProgress, signal } = {
     if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
     throw new WasmEngineError(`LibreOffice could not convert this document: ${err.message}`)
   } finally {
-    clearInterval(heartbeat)
     signal?.removeEventListener('abort', cancelNow)
   }
   const pdf = out?.data ? new Uint8Array(out.data) : new Uint8Array(out)

@@ -291,8 +291,19 @@ export default function App() {
               ? (meta.message || 'Converting with LibreOffice in this browser…')
               : `Converting in this browser — page ${Math.min(done + 1, total)} of ${total}…`,
           detail: meta?.stage === 'wasm'
-            ? 'LibreOffice is running inside this page — the layout will match Word exactly.'
+            ? 'LibreOffice is running inside this page — the layout will match Word exactly. '
+              + 'A long procedure can take several minutes; the converter service does it in seconds.'
             : o.detail,
+          // The wasm route shows a live elapsed clock (see ConvertTimer): the
+          // moment that route starts, remember when, and keep it running.
+          engineStartedAt: meta?.stage === 'wasm'
+            ? (o.engineStartedAt || (Date.now() - (meta.elapsedMs || 0)))
+            : o.engineStartedAt,
+          // When the engine last moved to a NEW step — the stall advisory
+          // rests on this, not on elapsed time: slow is fine, stuck is not.
+          stageChangedAt: meta?.stage === 'wasm'
+            ? (meta.message && meta.message !== o.stage ? Date.now() : (o.stageChangedAt || Date.now()))
+            : o.stageChangedAt,
           progress: meta?.stage === 'service'
             ? 0
             : meta?.stage === 'wasm'
@@ -586,6 +597,10 @@ export default function App() {
                 <div className={'openingbar-fill' + (opening.progress ? '' : ' indeterminate')}
                   style={opening.progress ? { width: `${Math.round(opening.progress * 100)}%` } : undefined} />
               </div>
+              {opening.engineStartedAt && (
+                <ConvertTimer startedAt={opening.engineStartedAt} pct={opening.progress}
+                  stageChangedAt={opening.stageChangedAt} />
+              )}
               <p className="openingstage">{opening.stage}</p>
               {opening.detail && <p className="openingdetail">{opening.detail}</p>}
               <button className="openingcancel" onClick={() => opening.cancel?.()}>Cancel</button>
@@ -933,6 +948,44 @@ export default function App() {
         )}
       </div>
     </div>
+  )
+}
+
+// The elapsed clock shown while LibreOffice converts inside the page. It runs
+// on its own one-second timer, independent of the engine's callbacks, so it
+// keeps counting through a long silent layout stretch — a climbing number is
+// the difference between "working on it" and "frozen". The percentage beside
+// it is the engine's last reported stage position.
+function ConvertTimer({ startedAt, pct, stageChangedAt }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const s = Math.max(0, Math.floor((now - startedAt) / 1000))
+  // Same step for a long time → say so, and say why it can happen. Verified
+  // against this engine build: a picture in the page header or footer, or an
+  // EMF graphic, stalls its PDF export indefinitely (an upstream bug — the
+  // converter service handles the same documents in seconds). Slow is normal;
+  // this only speaks up when the engine has stopped reporting steps.
+  const stalledFor = stageChangedAt ? now - stageChangedAt : 0
+  return (
+    <>
+      <div className="openingtimer">
+        <b>{s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`}</b>
+        {pct > 0 && <span className="openingtimer-pct">{Math.round(pct * 100)}%</span>}
+      </div>
+      {stalledFor > 150000 && (
+        <p className="convwarn openingstall">
+          Stuck on the same step for {Math.floor(stalledFor / 60000)} minutes. Some documents
+          hit a known limit of the engine inside this page: a picture in the page header or
+          footer, or an EMF graphic, can stall it indefinitely — this document may never
+          finish here. Press Cancel and open it another way: the converter service handles
+          these documents in seconds, and a PDF saved from Word (File → Save as → PDF) opens
+          directly with nothing to install.
+        </p>
+      )}
+    </>
   )
 }
 

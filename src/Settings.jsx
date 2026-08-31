@@ -174,12 +174,14 @@ export default function Settings({ onExit, profile, onProfile }) {
             </small>
           )}
           <p className="convwarn">
-            <b>Slower than the converter service.</b> Typical forms convert in seconds on a
-            desktop; an image-heavy procedure on a modest laptop can take minutes that the
-            service does in under 4 seconds. The screen counts the elapsed time while it
-            works, and Cancel stops it at once. Where a converter machine can be kept
-            running, it is still the better route — this one is for a device with no
-            reachable converter at all.
+            <b>Slower than the converter service, and not for every document.</b> Typical
+            forms convert in seconds on a desktop. But this engine build has a known limit:
+            a picture in the page header or footer, or an EMF graphic, can stall its PDF
+            export indefinitely — and formal procedures often carry exactly that (a logo or
+            classification box in the header). The screen counts the elapsed time, warns
+            when a conversion has genuinely stalled, and Cancel stops it at once. The
+            converter service handles all of these documents in seconds and is still the
+            better route wherever one machine can be kept running.
           </p>
           <details className="settinghelpbox">
             <summary>Engine files address (advanced)</summary>

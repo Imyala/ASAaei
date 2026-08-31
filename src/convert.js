@@ -199,8 +199,8 @@ export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.
         onProgress?.(0, 0, { stage: 'wasm' })
         const out = await convertViaWasm(new Uint8Array(arrayBuffer), filename, {
           signal,
-          onProgress: (msg, fraction) =>
-            onProgress?.(0, 0, { stage: 'wasm', message: msg, fraction }),
+          onProgress: (msg, fraction, elapsedMs) =>
+            onProgress?.(0, 0, { stage: 'wasm', message: msg, fraction, elapsedMs }),
         })
         const [autoFields, identity] = await Promise.all([
           detectPdfFields(out.bytes).catch((e) => {

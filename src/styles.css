@@ -455,6 +455,23 @@ button.danger:hover { background: #fdf1f2; }
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(320%); }
 }
+/* The live clock for in-page conversion: its own element, ticking every
+   second, with the engine's stage percentage beside it. Tabular numerals so
+   the digits don't wobble as they count. */
+.openingtimer {
+  display: flex; justify-content: center; align-items: baseline; gap: 10px;
+  margin: 0 0 10px;
+}
+.openingtimer b {
+  font-size: 24px; font-weight: 700; color: #2a3350;
+  font-variant-numeric: tabular-nums;
+}
+.openingtimer-pct {
+  font-size: 13px; font-weight: 600; color: #4a5470;
+  background: #eef1f6; border: 1px solid #d7dce8; border-radius: 999px;
+  padding: 2px 10px;
+}
+.openingstall { max-width: 460px; margin: 0 auto 12px; text-align: left; }
 .openingstage { color: #2a3350; font-size: 15px; margin: 0 0 4px; font-weight: 600; }
 .openingdetail { color: #6b7488; font-size: 13px; line-height: 1.5; margin: 0 auto; max-width: 420px; }
 .openingerror {
