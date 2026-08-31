@@ -71,6 +71,13 @@ const wrapperUrl = (file) =>
 let engine = null
 let loading = null
 
+// Progress travels as (message, fraction) with fraction in [0,1] or null when
+// this stretch has no honest number. The engine outlives any one conversion,
+// so its progress callback goes through this mutable sink — otherwise the
+// second document's progress would still be delivered to the first caller.
+const progressSink = { report: null }
+const emit = (message, fraction = null) => progressSink.report?.(message, fraction)
+
 // The engine is on unless the user has switched it off in Settings. There is
 // no address to configure any more — the default source is built in.
 export const deviceEngineEnabled = () => getConverterSettings().deviceEngine !== 'off'
@@ -152,7 +159,8 @@ async function fetchEngineFile(base, name, { onProgress, signal } = {}) {
         onProgress?.(fromCache
           ? `Preparing the LibreOffice engine (${name})…`
           : `Downloading the LibreOffice engine — ${name}, ${MB(done)}${total ? ` of ${MB(total)}` : ''}. `
-            + 'This happens once; afterwards it is kept on this device.')
+            + 'This happens once; afterwards it is kept on this device.',
+        total ? done / total : null)
       }, signal)
       if (!fromCache && cache) {
         // Cache AFTER the body arrived intact, keyed by the real URL so a
@@ -224,6 +232,7 @@ const blobUrl = (bytes, type) => URL.createObjectURL(new Blob([bytes], { type })
 // hand back something else. The service-side pool self-tests for the same
 // reason.
 async function loadEngine({ onProgress, signal } = {}) {
+  if (onProgress) progressSink.report = onProgress
   const blocked = isolationProblem()
   if (blocked) throw new WasmEngineError(blocked)
   const base = engineAssetsBase()
@@ -245,17 +254,17 @@ async function loadEngine({ onProgress, signal } = {}) {
 
   // Engine files, largest last so an unreachable source fails fast on the
   // small loader script instead of after minutes of download.
-  const js = await fetchEngineFile(base, 'soffice.js', { onProgress, signal })
-  const workerJs = await fetchEngineFile(base, 'soffice.worker.js', { onProgress, signal })
-  const data = await fetchEngineFile(base, 'soffice.data', { onProgress, signal })
-  const wasm = await fetchEngineFile(base, 'soffice.wasm', { onProgress, signal })
+  const js = await fetchEngineFile(base, 'soffice.js', { onProgress: emit, signal })
+  const workerJs = await fetchEngineFile(base, 'soffice.worker.js', { onProgress: emit, signal })
+  const data = await fetchEngineFile(base, 'soffice.data', { onProgress: emit, signal })
+  const wasm = await fetchEngineFile(base, 'soffice.wasm', { onProgress: emit, signal })
   pruneEngineCache(
     ['soffice.js', 'soffice.worker.js', 'soffice.data', 'soffice.wasm']
       .flatMap((n) => candidateNames(n).map((c) => `${base}${c}`)),
   ).catch(() => {})
   if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
 
-  onProgress?.('Starting LibreOffice — compiling the engine. The first start is the slow one.')
+  emit('Starting LibreOffice — compiling the engine. The first start is the slow one.')
 
   // Everything becomes a same-origin blob: URL — see the header comment.
   const converter = new WorkerBrowserConverter({
@@ -267,10 +276,13 @@ async function loadEngine({ onProgress, signal } = {}) {
     // through. Runs the conversion off the main thread — the page stays
     // responsive while LibreOffice grinds.
     browserWorkerJs: wrapperUrl('browser.worker.global.js'),
-    onProgress: (p) => onProgress?.(
+    // Delivered through the sink so progress always reaches the CURRENT
+    // conversion's screen, not the one that happened to load the engine.
+    onProgress: (p) => emit(
       p?.message
-        ? `${p.message}${Number.isFinite(p.percent) && p.percent > 0 ? ` (${Math.round(p.percent)}%)` : ''}`
-        : 'Starting the LibreOffice engine…'),
+        ? `${p.message.replace(/\.\.\.\s*$/, '')}${Number.isFinite(p.percent) && p.percent > 0 ? ` (${Math.round(p.percent)}%)` : '…'}`
+        : 'Starting the LibreOffice engine…',
+      Number.isFinite(p?.percent) && p.percent > 0 ? p.percent / 100 : null),
   })
   await converter.initialize()
   return { converter }
@@ -291,16 +303,48 @@ export function getWasmEngine(opts) {
 // that like any other missing converter, which means the document is refused
 // rather than approximated.
 export async function convertViaWasm(bytes, filename, { onProgress, signal } = {}) {
-  const { converter } = await getWasmEngine({ onProgress, signal })
+  // Track the freshest message and fraction so the heartbeat below can repeat
+  // the last known position instead of blanking the bar.
+  let lastAt = Date.now()
+  let lastFraction = null
+  const report = (message, fraction = null) => {
+    lastAt = Date.now()
+    if (Number.isFinite(fraction)) lastFraction = fraction
+    onProgress?.(message, Number.isFinite(fraction) ? fraction : lastFraction)
+  }
+  progressSink.report = report
+
+  const { converter } = await getWasmEngine({ onProgress: report, signal })
   if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
-  onProgress?.('Converting with LibreOffice in this browser…')
+  report('Converting with LibreOffice in this browser…', 0)
 
   const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   let out
+  // Laying out a long document is one long synchronous grind inside the
+  // worker with no callbacks, which read as "stuck at 30%". A heartbeat says
+  // it is alive and for how long; and Cancel must actually stop the grind —
+  // tearing the engine down (the worker is terminated) is the only way, and
+  // the next document simply starts it again.
+  const started = Date.now()
+  const heartbeat = setInterval(() => {
+    if (Date.now() - lastAt < 9500) return
+    const mins = Math.floor((Date.now() - started) / 60000)
+    onProgress?.(
+      'Still converting — LibreOffice is laying the document out '
+      + `(${mins < 1 ? 'under a minute' : `${mins} min`} so far). `
+      + 'A long procedure takes a while on this route; the converter service does it in seconds.',
+      lastFraction)
+  }, 5000)
+  const cancelNow = () => resetWasmEngine()
+  signal?.addEventListener('abort', cancelNow, { once: true })
   try {
     out = await converter.convert(input, { outputFormat: 'pdf' }, filename)
   } catch (err) {
+    if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
     throw new WasmEngineError(`LibreOffice could not convert this document: ${err.message}`)
+  } finally {
+    clearInterval(heartbeat)
+    signal?.removeEventListener('abort', cancelNow)
   }
   const pdf = out?.data ? new Uint8Array(out.data) : new Uint8Array(out)
 

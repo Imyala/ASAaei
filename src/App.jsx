@@ -254,11 +254,16 @@ export default function App() {
     setOpening({
       name: file.name,
       stage: isWord ? 'Converting the Word document…' : 'Opening the document…',
+      // Which engine line to show is settled per stage below — announcing
+      // "approximate" here, before knowing the route, was simply wrong: the
+      // LibreOffice engine in the page converts exactly.
       detail: isWord && converter?.ok
         ? `Using ${converter.info?.engine || 'LibreOffice'} — the layout will match Word exactly.`
-        : isWord
-          ? 'Converting in this browser. This is slower and the layout is approximate.'
-          : '',
+        : isWord && wasmAvailable()
+          ? 'Looking for a converter — without one, LibreOffice runs inside this page and the layout still matches Word exactly.'
+          : isWord
+            ? 'Converting in this browser. This is slower and the layout is approximate.'
+            : '',
       progress: 0,
       cancel: () => job.abort(),
     })
@@ -272,15 +277,23 @@ export default function App() {
         signal: job.signal,
         onProgress: (done, total, meta) => setOpening((o) => o && ({
           ...o,
-          // The LibreOffice route has no page-by-page progress to report — it
+          // The service route has no page-by-page progress to report — it
           // returns the whole PDF at once, and quickly — so don't invent one.
+          // The in-page engine reports real fractions (download, compile,
+          // conversion stages); show those on the bar.
           stage: meta?.stage === 'service'
             ? 'Converting with LibreOffice…'
             : meta?.stage === 'wasm'
-              ? (meta.message || 'Converting with LibreOffice on this device…')
+              ? (meta.message || 'Converting with LibreOffice in this browser…')
               : `Converting in this browser — page ${Math.min(done + 1, total)} of ${total}…`,
-          progress: meta?.stage === 'service' || meta?.stage === 'wasm' || !total
-            ? 0 : (done / total),
+          detail: meta?.stage === 'wasm'
+            ? 'LibreOffice is running inside this page — the layout will match Word exactly.'
+            : o.detail,
+          progress: meta?.stage === 'service'
+            ? 0
+            : meta?.stage === 'wasm'
+              ? (Number.isFinite(meta.fraction) ? meta.fraction : 0)
+              : !total ? 0 : (done / total),
         })),
       })
       if (job.signal.aborted) return
