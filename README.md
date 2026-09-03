@@ -216,18 +216,44 @@ elapsed count the whole way, and Cancel stops it instantly. The converter
 service is still an order of magnitude faster and remains the right answer
 where one machine can be kept running.
 
-**Known engine limit — images in headers, and EMF.** Bisected against real
-conversions: this WASM build's PDF export stalls **indefinitely** on a
-document with a picture in the page header or footer, or an EMF graphic
-anywhere (both engines published today — matbee 2.7.2 and BentoPDF 2.3.1 —
-behave the same; body photos and text-only headers are fine). Formal
-procedures often carry exactly that: a logo or classification box in the
-header. The app watches for it — when a conversion sits on one step for
-over 2½ minutes it says so on the opening screen and points at the routes
-that work: the converter service (which handles these documents in
-seconds) or the PDF Word itself saves. The engine also carries its own fonts
-and cannot see the ones installed on the device, so Verdana, Segoe UI and MS
-Gothic are substituted on every device alike.
+**Pictures are re-encoded before the engine sees them.** This WASM build
+deadlocks on the pictures a Word document normally carries. Measured in
+headless Chromium with one-picture documents built by hand: a PNG anywhere
+stalls it for ever at "Loading document", a JPEG or an EMF anywhere at
+"Saving", while a BMP — 64 px or 800 px, in the page header — converts in
+8 s. The difference is how LibreOffice reads them: PNG/JPEG/GIF/TIFF/WebP and
+the vector formats are decoded lazily, when the layout first needs the
+pixels, and that on-demand path never returns in this build; a BMP is
+decoded eagerly at import. So before a document goes to the in-page engine,
+`src/docxPreflight.js` has the browser decode every picture and swaps it
+inside the `.docx` for a 32-bit BMP with an alpha channel — lossless, the
+transparency kept (verified: the engine honours it), the layout untouched
+because a picture's size on the page is set by the drawing's extent, not by
+its pixels. A logo in the header now converts. EMF/WMF drawings are the one
+thing a browser cannot rasterise: they are replaced by blank space of the
+same size and a banner above the document says so — the converter service
+renders them.
+
+**Every engine proves itself before it is trusted.** The build's second
+fault: the *first* conversion a freshly started engine performs stops
+responding at random — silently, inside `lok_documentLoad` or
+`lok_documentSaveAs` — about one time in four on a text-only document and
+one time in two on a document with a picture (measured over some 80 starts;
+raising the pthread pool, disabling LibreOffice's thread pool, its threaded
+image import and scaling, and the wrapper's "Unipoll" event mode changed
+nothing). Every conversion *after* a successful first one completed: 22 of
+22, each in two seconds, PNG, JPEG and EMF documents alike. So
+`src/wasmConverter.js` starts an engine, converts a tiny built-in document
+with it, and only then hands it the real one; an engine that stalls on the
+self-test (20 s without a sign of life) or on start-up is terminated and started again, up to five
+times. The real conversion is watched too: one that sits on a step for two
+minutes is restarted on a fresh, self-tested engine, and one that sits for
+six is stopped with the other routes offered. Cancel does the same at once.
+Stopping means terminating the worker — the wrapper's own shutdown asks a
+worker that, stuck in a synchronous LibreOffice call, never answers, so a
+"cancelled" engine used to keep a core busy behind the next one. The engine
+also carries its own fonts and cannot see the ones installed on the device,
+so Verdana, Segoe UI and MS Gothic are substituted on every device alike.
 
 ### No converter, and the layout still has to be exact
 

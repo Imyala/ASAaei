@@ -36,8 +36,38 @@
 // `npm run serve` and the dev server send both. On a host that cannot set
 // headers at all (GitHub Pages), the app's service worker injects them and
 // index.html reloads the page once so they take effect — see src/sw.js.
+//
+// WHAT THE ENGINE CANNOT BE GIVEN, AND WHEN IT CANNOT BE TRUSTED
+// Two faults in this engine build, both measured in headless Chromium against
+// hand-built one-picture documents (the numbers are in src/docxPreflight.js
+// and the README):
+//
+//  1. It deadlocks, every time, on the pictures a Word document normally
+//     carries — PNG, JPEG and EMF alike, body or header — because it never
+//     returns from decoding them on demand. A BMP it reads eagerly, and that
+//     converts. So every document is pre-flighted (src/docxPreflight.js): the
+//     browser re-encodes its pictures as BMPs, losslessly and with their
+//     transparency, before the engine sees them; the vector drawings no
+//     browser can rasterise are blanked and reported.
+//
+//  2. The FIRST conversion a freshly started engine performs stops responding
+//     at random — silently, inside lok_documentLoad or lok_documentSaveAs —
+//     about one time in four on a text-only document and one time in two on
+//     a document with a picture. Every conversion after a successful first one
+//     completed (22 of 22 in testing, each in two seconds), whatever it
+//     contained. So no engine is handed a real document until it has proven
+//     itself on a tiny built-in one: the self-test converts in a second or
+//     two, and an engine that stalls on it is terminated and started again.
+//     The real conversion is still watched, and restarted once if it stalls,
+//     before the app gives up and says so.
+//
+// A stuck engine used to stay stuck for ever: the wrapper's own shutdown asks
+// the worker politely, and a worker deep in a synchronous LibreOffice call
+// never answers. Stopping an engine here terminates its worker outright.
 
+import JSZip from 'jszip'
 import { getConverterSettings } from './converter.js'
+import { prepareDocxForEngine } from './docxPreflight.js'
 
 export class WasmEngineError extends Error {
   constructor(message) {
@@ -58,6 +88,30 @@ export const DEFAULT_ENGINE_ASSETS =
 // Where the engine's downloaded files live between visits. Bump the suffix if
 // the storage format ever changes shape.
 const ENGINE_CACHE = 'asaaei-libreoffice-engine-v1'
+
+// How long the engine may sit on one reported step before the conversion is
+// declared stuck and stopped. Generous on purpose: an image-heavy procedure
+// on a modest tablet can legitimately spend minutes in "Saving" — slow is
+// fine, silent for ever is not. The opening screen warns well before this.
+export const STALL_LIMIT_MS = 6 * 60_000
+
+// A real conversion gets two attempts: the first is restarted if it sits on
+// one step this long, the second runs to STALL_LIMIT_MS. (A proven engine has
+// not stalled on a real document in testing; this is the safety net.)
+export const FIRST_ATTEMPT_STALL_MS = 2 * 60_000
+
+// The self-test document converts in one or two seconds on a desktop; a slow
+// tablet on a cold font cache may need ten. An engine that reports no step
+// for this long during it is stuck — and every second of the limit is a
+// second the user waits when it is, so it is per step, not for the whole.
+export const SELF_TEST_STALL_MS = 20_000
+
+// Starting the engine (compiling 147 MB of WebAssembly) can take a minute on
+// a tablet; an engine that has not come up in this long is not coming up.
+export const START_STALL_MS = 3 * 60_000
+
+// How many fresh engines to start before concluding the device cannot run one.
+export const SELF_TEST_ATTEMPTS = 5
 
 // The wrapper that drives the engine (dist/browser.js of
 // @matbee/libreoffice-converter, vendored in public/libreoffice/ with its
@@ -273,10 +327,8 @@ async function loadEngine({ onProgress, signal } = {}) {
   ).catch(() => {})
   if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
 
-  emit('Starting LibreOffice — compiling the engine. The first start is the slow one.')
-
-  // Everything becomes a same-origin blob: URL — see the header comment.
-  const converter = new WorkerBrowserConverter({
+  const startConverter = () => new WorkerBrowserConverter({
+    // Everything becomes a same-origin blob: URL — see the header comment.
     sofficeJs: jsUrl,
     sofficeWasm: wasmUrl,
     sofficeData: dataUrl,
@@ -293,12 +345,130 @@ async function loadEngine({ onProgress, signal } = {}) {
         : 'Starting the LibreOffice engine…',
       Number.isFinite(p?.percent) && p.percent > 0 ? p.percent / 100 : null),
   })
-  await converter.initialize()
-  // The data file has been read into the engine's filesystem; its ~100 MB
-  // blob has no further reader, so give the memory back. The wasm and script
-  // blobs stay — the engine spawns threads later that load them again.
-  URL.revokeObjectURL(dataUrl)
-  return { converter }
+
+  // Start the engine and make it prove itself — see fault 2 in the header
+  // comment. An engine that stalls starting up or on the self-test document
+  // is terminated and a fresh one started, up to SELF_TEST_ATTEMPTS times.
+  let lastStall = ''
+  for (let attempt = 1; attempt <= SELF_TEST_ATTEMPTS; attempt++) {
+    emit(attempt === 1
+      ? 'Starting LibreOffice — compiling the engine. The first start is the slow one.'
+      : `Restarting the engine — attempt ${attempt} of ${SELF_TEST_ATTEMPTS}…`)
+    const converter = startConverter()
+    try {
+      await withStallLimit(converter.initialize(), START_STALL_MS, signal)
+      emit('Checking the engine with a test document…')
+      // Every progress call from the engine counts as a sign of life; the
+      // limit is measured from the last one.
+      let lastStepAt = Date.now()
+      const downstream = progressSink.report
+      progressSink.report = (m, f) => { lastStepAt = Date.now(); downstream?.(m, f) }
+      let out
+      try {
+        out = await withStallLimit(
+          converter.convert(await selfTestDocx(), { outputFormat: 'pdf' }, 'self-test.docx'),
+          SELF_TEST_STALL_MS, signal, undefined, () => lastStepAt)
+      } finally {
+        progressSink.report = downstream
+      }
+      const pdf = out?.data ? new Uint8Array(out.data) : new Uint8Array(out)
+      if (!looksLikePdf(pdf)) throw new WasmEngineError('The engine did not return a PDF for the test document.')
+      // The data file has been read into the engine's filesystem; its ~100 MB
+      // blob has no further reader, so give the memory back. The wasm and
+      // script blobs stay — the engine spawns threads later that load them.
+      URL.revokeObjectURL(dataUrl)
+      return { converter }
+    } catch (err) {
+      killConverter(converter)
+      if (err?.name === 'AbortError') throw err
+      if (!(err instanceof EngineStalled)) throw err
+      lastStall = err.message
+      console.warn(`[asaaei] LibreOffice engine attempt ${attempt}: ${err.message}`)
+    }
+  }
+  throw new WasmEngineError(
+    `LibreOffice stopped responding on ${SELF_TEST_ATTEMPTS} starts in a row (${lastStall}). `
+    + 'This engine build does that at random on a fresh start, but not usually this often — '
+    + 'the device may be short of memory. Reload the page and try again, or open the document '
+    + 'another way: the converter service, or a PDF saved from Word.')
+}
+
+// Thrown when the engine has gone quiet for longer than a stage is allowed.
+export class EngineStalled extends WasmEngineError {
+  constructor(message) {
+    super(message)
+    this.name = 'EngineStalled'
+  }
+}
+
+// Settle `promise`, or reject with EngineStalled once `ms` have passed with
+// no sign of life — and reject with AbortError the moment `signal` fires. A
+// terminated worker never settles the wrapper's promise, so every wait on the
+// engine goes through here. With `lastActivity` (a function returning the
+// time of the engine's last progress report) the limit is measured from that
+// moment, so a slow-but-talking engine is not cut off; without it, from now.
+export function withStallLimit(promise, ms, signal, describe = () => `no response for ${Math.round(ms / 1000)} s`, lastActivity = null) {
+  return new Promise((resolve, reject) => {
+    let timer = null
+    const onAbort = () => { clearTimeout(timer); reject(new DOMException('cancelled', 'AbortError')) }
+    if (signal?.aborted) { onAbort(); return }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const done = (fn) => (v) => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fn(v) }
+    const started = Date.now()
+    const check = () => {
+      const quietFor = Date.now() - (lastActivity ? Math.max(lastActivity(), started) : started)
+      if (quietFor >= ms) { done(reject)(new EngineStalled(describe())); return }
+      timer = setTimeout(check, Math.min(ms - quietFor + 5, 1000))
+    }
+    timer = setTimeout(check, ms)
+    promise.then(done(resolve), done(reject))
+  })
+}
+
+// The %PDF magic, and enough bytes behind it to be a document rather than an
+// error page or a half-written file.
+const looksLikePdf = (bytes) =>
+  bytes.length >= 1000 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46
+
+// The self-test document: the smallest .docx that exercises a real load and
+// a real PDF export. Text only — a text-only warm-up was enough to make the
+// picture documents that followed it convert 22 times out of 22, and it
+// stalls less often itself. Built once, kept for the page.
+let selfTestBytes = null
+export async function selfTestDocx() {
+  if (selfTestBytes) return selfTestBytes
+  const zip = new JSZip()
+  zip.file('[Content_Types].xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    + '<Default Extension="xml" ContentType="application/xml"/>'
+    + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+    + '</Types>')
+  zip.file('_rels/.rels',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+    + '</Relationships>')
+  zip.file('word/document.xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+    + '<w:p><w:r><w:t>ASAaei engine self-test.</w:t></w:r></w:p>'
+    + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>')
+  selfTestBytes = await zip.generateAsync({ type: 'uint8array' })
+  return selfTestBytes
+}
+
+// Stop an engine for good. The wrapper's destroy() first ASKS its worker to
+// shut down and only then terminates it; a worker stuck inside a synchronous
+// LibreOffice call never answers, so that request would wait for ever and
+// the stuck engine would keep a CPU core busy behind the next one. Terminate
+// the worker outright, then let destroy() tidy up what is left.
+function killConverter(converter) {
+  if (!converter) return
+  try { converter.worker?.terminate?.() } catch { /* already gone */ }
+  try { converter.worker = null } catch { /* not ours to touch */ }
+  try { Promise.resolve(converter.destroy?.()).catch(() => {}) } catch { /* already gone */ }
 }
 
 export function getWasmEngine(opts) {
@@ -323,40 +493,99 @@ export async function convertViaWasm(bytes, filename, { onProgress, signal } = {
   // counting even while LibreOffice is deep in a silent layout stretch.
   const started = Date.now()
   let lastFraction = null
+  // The step the engine last reported and when it first reported it: the
+  // stall watchdog below rests on this — slow is fine, stuck is not.
+  let lastMessage = ''
+  let lastStepAt = Date.now()
   const report = (message, fraction = null) => {
     if (Number.isFinite(fraction)) lastFraction = fraction
+    if (message !== lastMessage) { lastMessage = message; lastStepAt = Date.now() }
     onProgress?.(message, Number.isFinite(fraction) ? fraction : lastFraction, Date.now() - started)
   }
   progressSink.report = report
 
-  const { converter } = await getWasmEngine({ onProgress: report, signal })
-  if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
-  report('Converting with LibreOffice in this browser…', 0)
-
+  // Pre-flight: re-encode the pictures the engine would hang on (see the
+  // header comment and src/docxPreflight.js). A document with no pictures
+  // passes through untouched; anything that is not a .docx package (a legacy
+  // .doc) does too. If the rewrite itself fails, the original goes in — the
+  // watchdog below still bounds the worst case.
   const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-  let out
-  // Cancel must actually stop the grind: tearing the engine down (its worker
-  // is terminated) is the only way to interrupt LibreOffice mid-layout, and
-  // the next document simply starts a fresh engine.
-  const cancelNow = () => resetWasmEngine()
-  signal?.addEventListener('abort', cancelNow, { once: true })
+  let prepared = { bytes: input, notes: [] }
   try {
-    out = await converter.convert(input, { outputFormat: 'pdf' }, filename)
+    prepared = await prepareDocxForEngine(input, { onProgress: (m) => report(m), signal })
   } catch (err) {
+    if (err?.name === 'AbortError') throw err
+    console.warn('Could not prepare the document for the in-page engine; converting it as-is:', err)
+  }
+  if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
+  if (prepared.rewritten || prepared.blank) {
+    // One line per document, for anyone reading the console next to a report.
+    console.info(`[asaaei] pictures prepared for the in-page engine: ${prepared.rewritten} re-encoded, `
+      + `${prepared.blank} left blank`)
+  }
+  // Two attempts (see FIRST_ATTEMPT_STALL_MS): a stalled engine is torn down
+  // and a fresh, self-tested one takes over with the same bytes.
+  const limits = [FIRST_ATTEMPT_STALL_MS, STALL_LIMIT_MS]
+  let out = null
+  for (let attempt = 0; attempt < limits.length; attempt++) {
+    const { converter } = await getWasmEngine({ onProgress: report, signal })
     if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
-    throw new WasmEngineError(`LibreOffice could not convert this document: ${err.message}`)
-  } finally {
-    signal?.removeEventListener('abort', cancelNow)
+    report('Converting with LibreOffice in this browser…', 0)
+    lastStepAt = Date.now()
+
+    // Cancel must actually stop the grind: tearing the engine down (its
+    // worker is terminated) is the only way to interrupt LibreOffice
+    // mid-layout, and the next document simply starts a fresh engine.
+    const cancelNow = () => resetWasmEngine()
+    signal?.addEventListener('abort', cancelNow, { once: true })
+    // A terminated worker never settles the wrapper's promise, so the
+    // conversion is raced against Cancel and against the stall watchdog, and
+    // both settle it themselves.
+    let watchdog = null
+    const limit = limits[attempt]
+    const stopped = new Promise((_, reject) => {
+      watchdog = setInterval(() => {
+        if (signal?.aborted) { reject(new DOMException('cancelled', 'AbortError')); return }
+        const stuckFor = Date.now() - lastStepAt
+        if (stuckFor < limit) return
+        resetWasmEngine()
+        reject(new EngineStalled(
+          `no progress for ${Math.round(stuckFor / 60000)} minutes at "${lastMessage || 'converting'}"`))
+      }, 2000)
+    })
+    try {
+      out = await Promise.race([
+        converter.convert(prepared.bytes, { outputFormat: 'pdf' }, filename),
+        stopped,
+      ])
+      break
+    } catch (err) {
+      if (signal?.aborted) throw new DOMException('cancelled', 'AbortError')
+      if (err instanceof EngineStalled && attempt < limits.length - 1) {
+        console.warn(`[asaaei] LibreOffice stopped responding (${err.message}); restarting the engine and trying again`)
+        report(`LibreOffice stopped responding (${err.message}). Restarting the engine and trying again…`)
+        continue
+      }
+      if (err instanceof EngineStalled) {
+        throw new WasmEngineError(
+          `LibreOffice stopped responding twice on this document (${err.message}), so the conversion `
+          + 'was stopped. The document uses something this engine build cannot handle. Open it another '
+          + 'way: the converter service converts every document in seconds, and a PDF saved from Word '
+          + '(File → Save as → PDF) opens directly with nothing to install.')
+      }
+      if (err instanceof WasmEngineError) throw err
+      throw new WasmEngineError(`LibreOffice could not convert this document: ${err.message}`)
+    } finally {
+      clearInterval(watchdog)
+      signal?.removeEventListener('abort', cancelNow)
+    }
   }
   const pdf = out?.data ? new Uint8Array(out.data) : new Uint8Array(out)
 
   // Never hand back something that is not a PDF. An engine that returns an
   // error page, an empty buffer or a half-written file must read as a failure
   // here, not as a converted document further down.
-  if (pdf.length < 1000
-      || pdf[0] !== 0x25 || pdf[1] !== 0x50 || pdf[2] !== 0x44 || pdf[3] !== 0x46) {
-    throw new WasmEngineError('The engine did not return a PDF.')
-  }
+  if (!looksLikePdf(pdf)) throw new WasmEngineError('The engine did not return a PDF.')
   return {
     bytes: pdf,
     engine: 'LibreOffice (in this browser)',
@@ -365,6 +594,9 @@ export async function convertViaWasm(bytes, filename, { onProgress, signal } = {
     // however the device is set up. Saying so every time is the honest thing:
     // it is the same caveat the service reports when a font is missing there.
     missingFonts: [],
+    // What the pre-flight had to leave blank (EMF/WMF drawings), for the
+    // banner above the document. Empty when every picture came through.
+    graphicNotes: prepared.notes || [],
   }
 }
 
@@ -373,5 +605,5 @@ export function resetWasmEngine() {
   const old = engine
   engine = null
   loading = null
-  try { old?.converter?.destroy?.() } catch { /* already gone */ }
+  killConverter(old?.converter)
 }

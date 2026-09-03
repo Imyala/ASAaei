@@ -135,7 +135,12 @@ get closest-proportion stand-ins and an honest warning.
 - **Key modules (`src/`):**
   - `converter.js` — service discovery, settings, convert-with-fallback
   - `wasmConverter.js` — LibreOffice-in-the-browser: engine download/cache/decompress, blob
-    wiring, conversion (wrapper vendored in `public/libreoffice/`, engine fetched from a CDN)
+    wiring, the start-up self-test that every engine must pass (this build's first conversion
+    stalls at random), conversion with a stall watchdog and one restart (wrapper vendored in
+    `public/libreoffice/`, engine fetched from a CDN)
+  - `docxPreflight.js` — rewrites a `.docx` so the WebAssembly engine can read its pictures:
+    every bitmap re-encoded as a 32-bit BMP by the browser (the engine deadlocks decoding
+    PNG/JPEG/EMF on demand), metafiles blanked and reported
   - `sw.js` — the service worker: offline precache + the COOP/COEP headers that let the
     WebAssembly engine run on hosts that cannot set headers (GitHub Pages)
   - `convert.js` — the conversion routes, shared `DOCX_CSS`, `fileToPdfBytes`

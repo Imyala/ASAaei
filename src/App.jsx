@@ -7,7 +7,7 @@ import { getProfile, setProfile, applyProfile } from './profile.js'
 import DocEditor from './DocEditor.jsx'
 import Settings from './Settings.jsx'
 import { discoverConverter, getConverterSettings, lastConverterStatus } from './converter.js'
-import { wasmAvailable, deviceEngineEnabled, isolationProblem } from './wasmConverter.js'
+import { wasmAvailable, deviceEngineEnabled, isolationProblem, STALL_LIMIT_MS } from './wasmConverter.js'
 
 // Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
 // running version is identifiable when diagnosing stale caches.
@@ -79,6 +79,9 @@ export default function App() {
   // or 'approximate' (in-browser rasteriser).
   const [fidelity, setFidelity] = useState('')
   const [missingFonts, setMissingFonts] = useState([])
+  // What the in-page engine's pre-flight had to leave blank (EMF/WMF
+  // drawings it cannot draw) — shown above the document, like missing fonts.
+  const [graphicNotes, setGraphicNotes] = useState([])
   // The document currently being opened: { name, stage, detail, progress,
   // cancel, error }. Non-null means the opening screen is what to show.
   const [opening, setOpening] = useState(null)
@@ -162,6 +165,7 @@ export default function App() {
     // clears the banner instead of inheriting the last document's.
     setFidelity(opts.fidelity || '')
     setMissingFonts(opts.missingFonts || [])
+    setGraphicNotes(opts.graphicNotes || [])
     if (opts.fields !== undefined) setFields(opts.fields)
     if (opts.mode) setMode(opts.mode)
     if (opts.resetLock) setLocked(false)
@@ -189,7 +193,7 @@ export default function App() {
   const openDocument = useCallback(async (bytes, name, meta = {}) => {
     const {
       autoFields = [], docKey: dk = '', docTitle: dt = '',
-      fidelity = '', missingFonts = [],
+      fidelity = '', missingFonts = [], graphicNotes = [],
     } = meta
     setDocKey(dk); setDocTitle(dt)
     let fields = autoFields.map((f) => ({ ...f, id: nextId() }))
@@ -208,7 +212,7 @@ export default function App() {
     setAppliedTemplate(applied)
     await showBytesInEditor(bytes, name, {
       fields, mode: fields.length ? 'fill' : 'design', resetLock: true, pages,
-      fidelity, missingFonts,
+      fidelity, missingFonts, graphicNotes,
     })
   }, [showBytesInEditor])
 
@@ -276,7 +280,7 @@ export default function App() {
     try {
       const {
         bytes, autoFields = [], docKey: dk = '', docTitle: dt = '',
-        fidelity: fid = '', missingFonts: fonts = [],
+        fidelity: fid = '', missingFonts: fonts = [], graphicNotes: gnotes = [],
       } = await fileToPdfBytes(file, {
         signal: job.signal,
         onProgress: (done, total, meta) => setOpening((o) => o && ({
@@ -313,7 +317,7 @@ export default function App() {
       })
       if (job.signal.aborted) return
       setOpening((o) => o && { ...o, stage: 'Laying out the pages…', progress: 0 })
-      const provenance = { fidelity: fid, missingFonts: fonts }
+      const provenance = { fidelity: fid, missingFonts: fonts, graphicNotes: gnotes }
       if (p.action === 'new') {
         // Recognise the form and auto-apply a saved layout if we have one;
         // otherwise fall back to auto-detected fields (or a clean canvas).
@@ -854,6 +858,12 @@ export default function App() {
           <button className="inlinelink" onClick={() => setScreen('settings')}>How to fix</button>
         </div>
       )}
+      {fidelity === 'exact' && graphicNotes.length > 0 && (
+        <div className="fidelity-bar warn">
+          <b>Converted exactly, with a gap.</b> {graphicNotes.join(' ')}
+          <button className="inlinelink" onClick={() => setScreen('settings')}>Set up the converter service</button>
+        </div>
+      )}
       {mode === 'design' && tool !== 'select' && (
         <div className="hintbar">Tap on the page to place a <b>{TOOL_LABEL[tool]}</b>.</div>
       )}
@@ -963,12 +973,14 @@ function ConvertTimer({ startedAt, pct, stageChangedAt }) {
     return () => clearInterval(t)
   }, [])
   const s = Math.max(0, Math.floor((now - startedAt) / 1000))
-  // Same step for a long time → say so, and say why it can happen. Verified
-  // against this engine build: a picture in the page header or footer, or an
-  // EMF graphic, stalls its PDF export indefinitely (an upstream bug — the
-  // converter service handles the same documents in seconds). Slow is normal;
-  // this only speaks up when the engine has stopped reporting steps.
+  // Same step for a long time → say so, and say what happens next. The
+  // pictures this engine build used to stall on (PNG/JPEG/EMF anywhere in the
+  // document) are re-encoded before it sees them, so a stall now means
+  // something new; the converter stops itself after STALL_LIMIT_MS on one
+  // step. Slow is normal; this only speaks up when the engine has stopped
+  // reporting steps.
   const stalledFor = stageChangedAt ? now - stageChangedAt : 0
+  const limitMin = Math.round(STALL_LIMIT_MS / 60000)
   return (
     <>
       <div className="openingtimer">
@@ -977,12 +989,12 @@ function ConvertTimer({ startedAt, pct, stageChangedAt }) {
       </div>
       {stalledFor > 150000 && (
         <p className="convwarn openingstall">
-          Stuck on the same step for {Math.floor(stalledFor / 60000)} minutes. Some documents
-          hit a known limit of the engine inside this page: a picture in the page header or
-          footer, or an EMF graphic, can stall it indefinitely — this document may never
-          finish here. Press Cancel and open it another way: the converter service handles
-          these documents in seconds, and a PDF saved from Word (File → Save as → PDF) opens
-          directly with nothing to install.
+          Stuck on the same step for {Math.floor(stalledFor / 60000)} minutes. LibreOffice has
+          stopped reporting progress, which usually means it has hit something this engine
+          build cannot handle. If it is still on this step at {limitMin} minutes it is stopped
+          automatically and the other routes are offered. Press Cancel to stop it now: the
+          converter service handles every document in seconds, and a PDF saved from Word
+          (File → Save as → PDF) opens directly with nothing to install.
         </p>
       )}
     </>

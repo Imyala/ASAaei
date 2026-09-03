@@ -3,7 +3,7 @@ import {
   QUALITY_HELP, QUALITY_LABELS,
   discoverConverter, getConverterSettings, setConverterSettings,
 } from './converter.js'
-import { DEFAULT_ENGINE_ASSETS, isolationProblem, resetWasmEngine } from './wasmConverter.js'
+import { STALL_LIMIT_MS, DEFAULT_ENGINE_ASSETS, isolationProblem, resetWasmEngine } from './wasmConverter.js'
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -174,14 +174,20 @@ export default function Settings({ onExit, profile, onProfile }) {
             </small>
           )}
           <p className="convwarn">
-            <b>Slower than the converter service, and not for every document.</b> Typical
-            forms convert in seconds on a desktop. But this engine build has a known limit:
-            a picture in the page header or footer, or an EMF graphic, can stall its PDF
-            export indefinitely — and formal procedures often carry exactly that (a logo or
-            classification box in the header). The screen counts the elapsed time, warns
-            when a conversion has genuinely stalled, and Cancel stops it at once. The
-            converter service handles all of these documents in seconds and is still the
-            better route wherever one machine can be kept running.
+            <b>Slower than the converter service, and EMF drawings come out blank.</b> Typical
+            forms convert in seconds on a desktop; an image-heavy procedure on a modest tablet
+            can take minutes. This engine build has two faults the app works around. It stalls
+            on the picture formats Word uses (PNG and JPEG included) and on EMF/WMF drawings,
+            so every picture is re-encoded for it before it sees the document: a logo in the
+            page header converts, exactly and with its transparency, while EMF/WMF drawings
+            are left as blank space and a banner above the document says so. And a freshly
+            started engine stops responding at random on its first conversion, so each engine
+            must first convert a tiny test document — one that stalls is restarted, which is
+            why the opening screen sometimes says so. A real conversion that makes no progress
+            is restarted once and then stopped after {Math.round(STALL_LIMIT_MS / 60000)}{' '}
+            minutes rather than left running, and Cancel stops it at once. The converter
+            service has neither fault, renders everything in seconds, and is still the better
+            route wherever one machine can be kept running.
           </p>
           <details className="settinghelpbox">
             <summary>Engine files address (advanced)</summary>

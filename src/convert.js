@@ -213,6 +213,7 @@ export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.
         return {
           bytes: out.bytes, autoFields, ...identity,
           fidelity: 'exact', engine: out.engine, missingFonts: out.missingFonts,
+          graphicNotes: out.graphicNotes || [],
         }
       } catch (wasmErr) {
         if (wasmErr?.name === 'AbortError') throw wasmErr
