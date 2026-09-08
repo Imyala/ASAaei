@@ -6,7 +6,7 @@ import { loadTemplate, saveTemplate, findTemplateByDocKey } from './store.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
 import Settings from './Settings.jsx'
 import { discoverConverter, getConverterSettings, lastConverterStatus } from './converter.js'
-import { wasmAvailable, deviceEngineEnabled, isolationProblem, STALL_LIMIT_MS } from './wasmConverter.js'
+import { wasmAvailable, deviceEngineEnabled, isolationProblem, STALL_LIMIT_MS, ENGINE_CACHE } from './wasmConverter.js'
 
 // Build stamp injected by Vite (see vite.config.js). Shown in the UI so the
 // running version is identifiable when diagnosing stale caches.
@@ -100,6 +100,9 @@ export default function App() {
   const [showPages, setShowPages] = useState(false)
   const [manualPages, setManualPages] = useState(new Set()) // pages where status cells are typed, not tapped
   const [profile, setProfileState] = useState(getProfile())
+  // What the "check for update" link last said: '' | a short message.
+  const [updateNote, setUpdateNote] = useState('')
+  const [updateBusy, setUpdateBusy] = useState(false)
   const updateProfile = (patch) => {
     const p = { ...profile, ...patch }
     setProfileState(p); setProfile(p)
@@ -458,8 +461,33 @@ export default function App() {
   // Drop the service worker and its caches, then reload. The app is a PWA, so a
   // browser that already has it can keep serving the build it cached — which is
   // indistinguishable, from the user's side, from a fix that was never made.
-  const forceUpdate = async () => {
-    setBusy('Fetching the newest version…')
+  // "Check for update": ask the server which build it is serving (version.json
+  // is written at build time and never precached, so the answer is always the
+  // deployed one). Same build → say so and stop. A newer build → drop the
+  // service worker and its precache so the reload fetches everything fresh.
+  // The LibreOffice engine cache is left alone: it is a 78 MB download that
+  // does not change between builds.
+  const checkForUpdate = async () => {
+    setUpdateBusy(true)
+    setUpdateNote('Checking…')
+    let latest
+    try {
+      const res = await fetch(`./version.json?t=${Date.now()}`, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      latest = String((await res.json()).build || '')
+    } catch {
+      setUpdateNote(navigator.onLine
+        ? 'Could not reach the server — try again in a moment.'
+        : 'No connection — try again when online.')
+      setUpdateBusy(false)
+      return
+    }
+    if (!latest || latest === BUILD_ID) {
+      setUpdateNote('You have the latest version.')
+      setUpdateBusy(false)
+      return
+    }
+    setUpdateNote(`Updating to build ${latest}…`)
     try {
       if ('serviceWorker' in navigator) {
         const regs = await navigator.serviceWorker.getRegistrations()
@@ -467,7 +495,7 @@ export default function App() {
       }
       if (window.caches?.keys) {
         const keys = await caches.keys()
-        await Promise.all(keys.map((k) => caches.delete(k)))
+        await Promise.all(keys.filter((k) => k !== ENGINE_CACHE).map((k) => caches.delete(k)))
       }
     } catch { /* a browser that blocks either one still reloads below */ }
     try { sessionStorage.clear() } catch { /* private mode */ }
@@ -482,7 +510,6 @@ export default function App() {
     setPages((old) => { revokePageImages(old); return [] })
     setScreen('home'); setFields([]); setPageOrder([])
     setAppliedTemplate(''); setDocKey(''); setDocTitle(''); setShowPages(false)
-    setEditorInit(null)
   }
 
   // Render whichever page is on screen next. Without this, jumping to page 30
@@ -680,37 +707,84 @@ export default function App() {
                   fill="#e8eefb" stroke="#3b57a6" strokeWidth="1.6" strokeLinejoin="round" />
               </svg>
             </span>
-            <h1>ASAaei</h1>
+            <div className="landing-title">
+              <h1>ASAaei</h1>
+              <p className="landing-sub">Fill, sign and lock documents — on iPad, tablet or desktop.</p>
+            </div>
             <button className="ghostbtn" onClick={() => setScreen('settings')}>Settings</button>
           </header>
-          <p className="landing-sub">Fill, sign and lock documents — on iPad, tablet or desktop.</p>
 
-          <p className="landing-greeting">
-            {profile.name
-              ? <>Ready for <b>{profile.name}</b>{profile.sapId ? <> · {profile.sapId}</> : null} — your details go into every
-                form as it opens.</>
-              : <>Add your name and SAP ID in <button className="inlinelink" onClick={() => setScreen('settings')}>Settings</button> and
-                every form will open already filled in.</>}
-          </p>
-
-          <div className="choices">
-            <button className="choice" onClick={() => pickFile('new')}>
-              <span className="choice-icon" aria-hidden="true">
-                <svg viewBox="0 0 32 32" width="26" height="26" fill="none"
-                  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M7 4h12l6 6v18a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
-                  <path d="M19 4v6h6" />
-                  <path d="M10 17h9M10 22h6" />
+          {/* The one thing to do, made unmissable: a big illustrated card with
+              one button sized for a gloved thumb. */}
+          <section className="hero">
+            <div className="hero-art" aria-hidden="true">
+              <svg viewBox="0 0 200 240" width="200" height="240">
+                <rect x="20" y="10" width="160" height="220" rx="12" fill="#fff" />
+                <rect x="38" y="30" width="70" height="8" rx="4" fill="#2a3d73" />
+                <rect x="38" y="46" width="110" height="5" rx="2.5" fill="#c9d3e6" />
+                <rect x="38" y="70" width="74" height="6" rx="3" fill="#c9d3e6" />
+                <rect x="134" y="64" width="24" height="18" rx="4" fill="#eaf7ee" stroke="#46a86e" strokeWidth="1.5" />
+                <path d="M139.5 73 l4 4 7-8" fill="none" stroke="#2f9e57" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                <rect x="38" y="98" width="60" height="6" rx="3" fill="#c9d3e6" />
+                <rect x="134" y="92" width="24" height="18" rx="4" fill="#eaf7ee" stroke="#46a86e" strokeWidth="1.5" />
+                <path d="M139.5 101 l4 4 7-8" fill="none" stroke="#2f9e57" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                <rect x="38" y="126" width="80" height="6" rx="3" fill="#c9d3e6" />
+                <rect x="134" y="120" width="24" height="18" rx="4" fill="#fff" stroke="#c9d3e6" strokeWidth="1.5" />
+                <path d="M42 170 c8-20 14-12 20-3 s10 8 18-6 s12 4 18-4 s10 10 24-12"
+                  fill="none" stroke="#2a3d73" strokeWidth="2.6" strokeLinecap="round" />
+                <rect x="38" y="178" width="120" height="1.5" fill="#d3d9e6" />
+                <rect x="38" y="188" width="46" height="5" rx="2.5" fill="#c9d3e6" />
+                <circle cx="158" cy="206" r="22" fill="#46a86e" stroke="#fff" strokeWidth="4" />
+                <path d="M147 206.5 l7.5 7.5 15-15" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div className="hero-body">
+              <span className="hero-kicker">Start here</span>
+              <h2>Fill out a document</h2>
+              <p className="hero-lead">
+                Open a PDF or Word form. The boxes are found for you — type, tick, sign,
+                then save the finished PDF.
+              </p>
+              <button className="hero-cta" onClick={() => pickFile('new')}>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  <path d="M12 11v6M9 14l3-3 3 3" />
                 </svg>
-              </span>
-              <span className="choice-title">Fill out a document</span>
-              <span className="choice-note">
-                Open a PDF or Word form. The boxes are found for you — type, tick, sign, then save the finished PDF.
-              </span>
-              <span className="choice-go">Choose a file</span>
-            </button>
+                Choose a file
+              </button>
+              <p className="hero-who">
+                {profile.name
+                  ? <>
+                      <span className="avatar" aria-hidden="true">{profile.name.trim().charAt(0).toUpperCase()}</span>
+                      <span>Signing as <b>{profile.name}</b>{profile.sapId ? <> · {profile.sapId}</> : null} — your
+                        details go into every form as it opens.</span>
+                    </>
+                  : <>
+                      <span className="avatar" aria-hidden="true">?</span>
+                      <span>Add your name and SAP ID in{' '}
+                        <button className="inlinelink" onClick={() => setScreen('settings')}>Settings</button>{' '}
+                        and every form will open already filled in.</span>
+                    </>}
+              </p>
+            </div>
+          </section>
 
-          </div>
+          {/* How it goes, in three glances. Nothing here is a control. */}
+          <ol className="steps">
+            <li>
+              <span className="step-n">1</span>
+              <span className="step-t"><b>Open</b>a PDF or Word form from this device</span>
+            </li>
+            <li>
+              <span className="step-n">2</span>
+              <span className="step-t"><b>Fill &amp; sign</b>tap OK / Fail / N/A, type, sign with a finger</span>
+            </li>
+            <li>
+              <span className="step-n">3</span>
+              <span className="step-t"><b>Save</b>a locked PDF, straight back to this device</span>
+            </li>
+          </ol>
 
           {busy && <div className="landing-busy">{busy}</div>}
 
@@ -718,7 +792,8 @@ export default function App() {
             <p>Documents are opened from this device and saved back to it. Nothing is uploaded.</p>
             <p className="build">
               Build {BUILD_ID}
-              <button className="inlinelink" onClick={forceUpdate}>check for update</button>
+              <button className="inlinelink" onClick={checkForUpdate} disabled={updateBusy}>check for update</button>
+              {updateNote && <span className="updatenote">{updateNote}</span>}
             </p>
           </footer>
         </div>

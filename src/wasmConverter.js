@@ -87,7 +87,9 @@ export const DEFAULT_ENGINE_ASSETS =
 
 // Where the engine's downloaded files live between visits. Bump the suffix if
 // the storage format ever changes shape.
-const ENGINE_CACHE = 'asaaei-libreoffice-engine-v1'
+// Exported so a cache wipe elsewhere (check for update) can leave the ~78 MB
+// engine download alone. index.html's self-heal spares it by the same name.
+export const ENGINE_CACHE = 'asaaei-libreoffice-engine-v1'
 
 // How long the engine may sit on one reported step before the conversion is
 // declared stuck and stopped. Generous on purpose: an image-heavy procedure

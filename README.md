@@ -355,6 +355,15 @@ LibreOffice engine inside the website. The old choices (always use the converter
 copy in the browser, PDF quality, switching the in-page engine off) were removed from the screen
 so there is nothing to set wrongly; a stored mode from an earlier build is ignored.
 
+## Check for update
+
+The home footer shows the build stamp with a **check for update** link. It asks the server for
+`version.json` (written at build time, never cached by the service worker) and compares it with
+the running build. Same build: it says so. Newer build: it drops the service worker and its
+precache and reloads, so the fresh build is fetched. The LibreOffice engine cache is kept, so an
+update never repeats the 78 MB engine download. Offline, or with the server unreachable, it says
+that rather than pretending.
+
 ## Offline / installable
 
 "Add to Home Screen" and run with no connection after the first load. Offline, the app falls back

@@ -2,6 +2,22 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// The build stamp. Shown in the UI and written to version.json so a running
+// app can ask the server which build it is serving (the "check for update"
+// link on the home screen). BUILD_ID overrides the timestamp for tests.
+const BUILD_ID = process.env.BUILD_ID || new Date().toISOString().slice(0, 16).replace('T', ' ')
+
+// Emits version.json next to index.html. It is deliberately not in the
+// service worker's precache list (only js/css/html/images are), so a fetch
+// for it always goes to the network and answers for the deployed build,
+// not the cached one.
+const versionFile = () => ({
+  name: 'asaaei-version-file',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ build: BUILD_ID }) })
+  },
+})
+
 // PWA + offline: the app installs to the home screen (iPad/tablet/desktop) and
 // works with no connection after the first visit. Note: a service worker needs
 // the app served over http(s) — offline mode does not work from a file:// path.
@@ -17,7 +33,7 @@ export default defineConfig({
   // the UI — this makes it obvious when a browser/service-worker is still
   // serving an old cached build after a redeploy.
   define: {
-    __BUILD_ID__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+    __BUILD_ID__: JSON.stringify(BUILD_ID),
   },
   // Cross-origin isolation in dev and preview. The production equivalents are
   // the convert-server's headers and, on hosts that cannot set headers at all
@@ -37,6 +53,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    versionFile(),
     VitePWA({
       // Hand-written worker (src/sw.js): workbox's generated one cannot inject
       // the COOP/COEP headers the in-website LibreOffice engine needs.

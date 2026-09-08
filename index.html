@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
-    <title>ASAaei — Fill &amp; Edit Documents</title>
+    <title>ASAaei — Fill &amp; Sign Documents</title>
     <script>
       // Self-heal against a blank screen. The usual cause after a redeploy is a
       // stale service-worker cache from an earlier (broken) build still serving
@@ -28,7 +28,12 @@
           if (window.caches && caches.keys) {
             jobs.push(
               caches.keys()
-                .then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k) })) })
+                .then(function (ks) {
+                  // The LibreOffice engine cache is a 78 MB download and has
+                  // nothing to do with a stale build, so it is kept.
+                  ks = ks.filter(function (k) { return k !== 'asaaei-libreoffice-engine-v1' })
+                  return Promise.all(ks.map(function (k) { return caches.delete(k) }))
+                })
                 .catch(function () {})
             )
           }
