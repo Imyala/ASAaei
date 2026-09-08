@@ -464,10 +464,16 @@ export default function App() {
   // indistinguishable, from the user's side, from a fix that was never made.
   // "Check for update": ask the server which build it is serving (version.json
   // is written at build time and never precached, so the answer is always the
-  // deployed one). Same build → say so and stop. A newer build → drop the
-  // service worker and its precache so the reload fetches everything fresh.
-  // The LibreOffice engine cache is left alone: it is a 78 MB download that
-  // does not change between builds.
+  // deployed one). Same build → say so and stop. A newer build → first make
+  // sure the new page and its script can actually be fetched, then drop the
+  // service worker and its precache and load the page again at a URL with a
+  // fresh query parameter, so no cache between here and the origin hands back
+  // the old page. That last part matters on GitHub Pages: its CDN keeps
+  // serving the previous index.html for up to ten minutes after a deploy
+  // while the old hashed script it names is already gone — a plain reload in
+  // that window is a blank screen. If the new build is not fully published
+  // yet, say so and change nothing. The LibreOffice engine cache is left
+  // alone throughout: a 78 MB download that does not change between builds.
   const checkForUpdate = async () => {
     setUpdateBusy(true)
     setUpdateNote('Checking…')
@@ -489,6 +495,19 @@ export default function App() {
       return
     }
     setUpdateNote(`Updating to build ${latest}…`)
+    const target = new URL(location.href)
+    target.searchParams.set('v', latest)
+    try {
+      // The page at the fresh URL, and the script it names, must both be there.
+      const html = await (await fetch(target.href, { cache: 'no-store' })).text()
+      const src = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/)?.[1]
+      const script = src ? new URL(src, target.href) : null
+      if (!script || !(await fetch(script.href, { method: 'HEAD', cache: 'no-store' })).ok) throw new Error('not published')
+    } catch {
+      setUpdateNote(`Build ${latest} is still being published — try again in a few minutes.`)
+      setUpdateBusy(false)
+      return
+    }
     try {
       if ('serviceWorker' in navigator) {
         const regs = await navigator.serviceWorker.getRegistrations()
@@ -498,9 +517,9 @@ export default function App() {
         const keys = await caches.keys()
         await Promise.all(keys.filter((k) => k !== ENGINE_CACHE).map((k) => caches.delete(k)))
       }
-    } catch { /* a browser that blocks either one still reloads below */ }
+    } catch { /* a browser that blocks either one still loads the page below */ }
     try { sessionStorage.clear() } catch { /* private mode */ }
-    location.reload()
+    location.replace(target.href)
   }
 
   const goHome = () => {

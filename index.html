@@ -7,13 +7,23 @@
     <title>ASAaei — Fill &amp; Sign Documents</title>
     <script>
       // Self-heal against a blank screen. The usual cause after a redeploy is a
-      // stale service-worker cache from an earlier (broken) build still serving
-      // hashed asset URLs that now 404 — the module never loads and #root stays
+      // stale copy of this page — from the service worker's cache, the
+      // browser's HTTP cache, or the GitHub Pages CDN, which keeps serving the
+      // old index.html for up to ten minutes — still naming hashed asset URLs
+      // that the new deploy has deleted. The module 404s and #root stays
       // empty. If we detect that, we unregister the service worker, wipe the
-      // caches and reload ONCE. A sessionStorage guard stops a reload loop if
-      // the blank screen has some other cause; a healthy render clears it.
+      // caches and load the page again ONCE, at a URL with a fresh query
+      // parameter so every cache between here and the origin treats it as
+      // new. A sessionStorage guard stops a loop if the blank screen has some
+      // other cause; a healthy render clears it and tidies the URL.
       (function () {
         var GUARD = 'asaaei:self-healed'
+        var ENGINE_CACHE = 'asaaei-libreoffice-engine-v1'
+        function freshUrl(param) {
+          var u = new URL(location.href)
+          u.searchParams.set(param, String(Date.now()))
+          return u.href
+        }
         function heal(reason) {
           if (sessionStorage.getItem(GUARD)) return // already tried this session
           try { sessionStorage.setItem(GUARD, reason || '1') } catch (e) {}
@@ -31,13 +41,13 @@
                 .then(function (ks) {
                   // The LibreOffice engine cache is a 78 MB download and has
                   // nothing to do with a stale build, so it is kept.
-                  ks = ks.filter(function (k) { return k !== 'asaaei-libreoffice-engine-v1' })
+                  ks = ks.filter(function (k) { return k !== ENGINE_CACHE })
                   return Promise.all(ks.map(function (k) { return caches.delete(k) }))
                 })
                 .catch(function () {})
             )
           }
-          var reload = function () { location.reload() }
+          var reload = function () { location.replace(freshUrl('heal')) }
           Promise.all(jobs).then(reload, reload)
         }
         // A failed app script/stylesheet is the clearest blank-screen signal.
@@ -45,13 +55,24 @@
           var t = e && e.target
           if (t && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) heal('asset')
         }, true)
-        // Fallback: nothing mounted shortly after load → treat as blank.
+        // Fallback: nothing mounted a while after load → treat as blank. Eight
+        // seconds, not four: on a tablet on mobile data the app bundle can
+        // legitimately take that long, and healing a slow load only restarts it.
         window.addEventListener('load', function () {
           setTimeout(function () {
             var root = document.getElementById('root')
-            if (!root || root.childElementCount === 0) heal('empty')
-            else { try { sessionStorage.removeItem(GUARD) } catch (e) {} }
-          }, 4000)
+            if (!root || root.childElementCount === 0) { heal('empty'); return }
+            try { sessionStorage.removeItem(GUARD) } catch (e) {}
+            // Healthy: drop the cache-busting parameters a heal or an update
+            // left in the address, so the URL a technician bookmarks is clean.
+            try {
+              var u = new URL(location.href)
+              if (u.searchParams.has('heal') || u.searchParams.has('v')) {
+                u.searchParams.delete('heal'); u.searchParams.delete('v')
+                history.replaceState(history.state, '', u.href)
+              }
+            } catch (e) {}
+          }, 8000)
         })
       })()
     </script>
