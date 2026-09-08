@@ -799,13 +799,15 @@ export default function App() {
       <input ref={fileRef} type="file" accept={DOC_ACCEPT} hidden onChange={onFileChosen} />
       <header className="toolbar">
         <div className="group">
-          <button className="link" onClick={goHome}>← Home</button>
-          <strong className="brand">ASAaei</strong>
-          <span className="file">{fileName}</span>
+          <button className="ghostbtn" onClick={goHome}>← Home</button>
+          <span className="toolbar-doc">
+            <strong className="brand">ASAaei</strong>
+            <span className="file" title={fileName}>{fileName}</span>
+          </span>
           {appliedTemplate && <span className="applied-chip" title="Saved layout applied automatically">✓ {appliedTemplate}</span>}
         </div>
 
-        <div className="group modes">
+        <div className="group modes" role="group" aria-label="Mode">
           <button className={mode === 'design' ? 'on' : ''} disabled={locked}
             onClick={() => { setMode('design'); setTool('select') }}>Design form</button>
           <button className={mode === 'fill' ? 'on' : ''}
@@ -813,7 +815,7 @@ export default function App() {
         </div>
 
         {mode === 'design' && !locked && (
-          <div className="group tools">
+          <div className="group tools" role="group" aria-label="Tools">
             {Object.keys(TOOL_LABEL).map((t) => (
               <button key={t} className={tool === t ? 'on' : ''} onClick={() => setTool(t)}>
                 {t === 'select' ? '↖' : '＋'} {TOOL_LABEL[t]}
@@ -825,14 +827,28 @@ export default function App() {
         <div className="group right">
           {pages.length > 1 && (
             <button className={showPages ? 'on' : ''} onClick={() => setShowPages((v) => !v)}>
-              ▤ Pages ({selectedPages.size}/{pages.length})
+              Pages <span className="count">{selectedPages.size}/{pages.length}</span>
             </button>
           )}
-          {mode === 'design' && !locked && <button onClick={saveAsTemplate}>💾 Save as template</button>}
-          <button onClick={() => pickFile('reload')}>↻ Reload file</button>
-          {locked && <span className="locked-badge">🔒 Locked</span>}
+          {mode === 'design' && !locked && <button onClick={saveAsTemplate}>Save as template</button>}
+          <button onClick={() => pickFile('reload')}>Reload file</button>
+          {locked && (
+            <span className="locked-badge">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                <rect x="3" y="7" width="10" height="7" rx="1.5" />
+                <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+              </svg>
+              Locked
+            </span>
+          )}
           {!locked && <button onClick={finalize}>Finalize &amp; lock</button>}
-          <button className="primary" onClick={download}>Download PDF</button>
+          <button className="primary cta" onClick={download}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 4v11M7 10l5 5 5-5" />
+              <path d="M4 19h16" />
+            </svg>
+            Download PDF
+          </button>
         </div>
       </header>
 
