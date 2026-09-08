@@ -68,7 +68,10 @@ export function getConverterSettings() {
     const raw = localStorage.getItem(SETTINGS_KEY)
     if (!raw) return { ...DEFAULTS }
     const saved = JSON.parse(raw)
-    return { ...DEFAULTS, ...saved }
+    // The conversion mode and the in-page engine switch are no longer offered
+    // on the Settings screen, so a value stored by an earlier build must not
+    // keep steering conversion from somewhere nobody can see or undo.
+    return { ...DEFAULTS, ...saved, mode: DEFAULTS.mode, deviceEngine: DEFAULTS.deviceEngine }
   } catch {
     return { ...DEFAULTS }
   }

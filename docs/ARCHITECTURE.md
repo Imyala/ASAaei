@@ -1,4 +1,4 @@
-# ASAaei — Document Filler & Editor
+# ASAaei — Document Filler
 
 **Status:** Working app
 **Audience:** the team building and maintaining this.
@@ -7,14 +7,16 @@
 
 ## 1. What we are building
 
-A single browser app that does two jobs with documents, chosen from the home screen:
+A single browser app that does one job with documents, from a one-button home screen:
 
-1. **Fill out a document** — open a Word/PDF form, fill it in with prefillable fields (text,
-   dropdowns, OK/Fail/N/A tick boxes), sign it (name + date/time, Outlook-style), lock it, and
-   save the finished **PDF**.
-2. **Edit a document** — open or create a document and change its text, formatting and layout
-   (headings, styles, tables, images) — a Word/Adobe-style editor — then export a PDF or a
-   re-editable HTML file.
+**Fill out a document** — open a Word/PDF form, fill it in with prefillable fields (text,
+dropdowns, OK/Fail/N/A tick boxes), sign it (name + date/time, Outlook-style), lock it, and
+save the finished **PDF**.
+
+It is built for technicians in the field, so the home screen and Settings are kept to the
+minimum: the one button, the technician's name and SAP ID, and converter setup folded away under
+an *Advanced* section. (An earlier build also carried a rich-text document editor; it was removed
+from the app in favour of that simplicity.)
 
 The app itself runs entirely on the device — including exact Word → PDF conversion: the website
 carries LibreOffice compiled to WebAssembly (`src/wasmConverter.js`), fetched from a CDN on first
@@ -60,17 +62,6 @@ fidelity and better box placement come from the same change.
 **Tamper-proofing note:** the app enforces "no longer editable" by flattening the fields on lock.
 For legally-robust, tamper-*evident* documents, **cryptographic PDF signatures** (PKI certificate
 + DocMDP field lock) could be added later. That is an upgrade, not required for normal use.
-
-### Edit
-
-The editor works on HTML — the same clean, Word-like HTML the fill fallback gets from a `.docx`
-(via mammoth) — in a `contentEditable` surface with a formatting toolbar. Exports:
-
-- **PDF** — the edited HTML is wrapped in an A4 page stylesheet and converted by LibreOffice when
-  the service is reachable (vector text, small file), otherwise rasterised in the browser. The
-  editor says which route produced the file, because "selectable text" versus "a picture of the
-  document" matters to whoever receives it.
-- **HTML** — a self-contained file that bundles the stylesheet and re-opens in the editor.
 
 ## 4. Conversion: two routes, chosen automatically
 
@@ -130,7 +121,7 @@ get closest-proportion stand-ins and an honest warning.
 - **Front-end:** React (Vite), open-source libraries only (no licence fees):
   - `pdf-lib` — build/fill/flatten PDFs
   - `pdf.js` (`pdfjs-dist`) — render PDF pages, and read text + drawn geometry for detection
-  - `mammoth` — Word (`.docx`) → HTML (fallback route and the editor)
+  - `mammoth` — Word (`.docx`) → HTML (fallback route)
   - `html2canvas` — rasterise HTML to page images (fallback route)
 - **Key modules (`src/`):**
   - `converter.js` — service discovery, settings, convert-with-fallback
@@ -144,8 +135,7 @@ get closest-proportion stand-ins and an honest warning.
   - `sw.js` — the service worker: offline precache + the COOP/COEP headers that let the
     WebAssembly engine run on hosts that cannot set headers (GitHub Pages)
   - `convert.js` — the conversion routes, shared `DOCX_CSS`, `fileToPdfBytes`
-  - `Settings.jsx` — converter status/options and the user's profile
-  - `DocEditor.jsx` — the document editor (toolbar + contentEditable + PDF/HTML export)
+  - `Settings.jsx` — the user's profile, plus converter status and address under *Advanced*
   - `App.jsx` — home screen, the fill editor, page picker, fill layouts
   - `bake.js` — draw field values onto the PDF and flatten
   - `pdfFields.js` / `pdfBoxes.js` / `pdfGrid.js` — PDF field/box detection

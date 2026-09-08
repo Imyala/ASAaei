@@ -1,26 +1,22 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import {
-  QUALITY_HELP, QUALITY_LABELS,
-  discoverConverter, getConverterSettings, setConverterSettings,
-} from './converter.js'
-import { STALL_LIMIT_MS, DEFAULT_ENGINE_ASSETS, isolationProblem, resetWasmEngine } from './wasmConverter.js'
+import { discoverConverter, getConverterSettings, setConverterSettings } from './converter.js'
 
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-// Everything on this screen is optional. The app works with none of it touched:
-// conversion is on Automatic, which finds a converter if one is running and
-// quietly uses the in-browser path if not. The screen exists so that when
-// something *is* wrong — the converter is on another machine, a font is missing
-// and a form is re-wrapping — the reason is visible and fixable, rather than
-// being an unexplained difference in the output.
+// Kept deliberately small: a technician comes here once, to enter their name
+// and SAP ID, and never again. Conversion is automatic — it finds a converter
+// if one is running and uses the in-page engine if not — so its controls are
+// folded into a single "Advanced" section for whoever sets the office
+// converter up. The conversion mode, PDF quality and engine-source options are
+// still honoured from stored settings but no longer offered on screen: they
+// were places to make a mistake, not choices a technician needs.
 
 export default function Settings({ onExit, profile, onProfile }) {
   const [settings, setSettings] = useState(getConverterSettings)
   const [status, setStatus] = useState(null)   // health payload, or an error
   const [checking, setChecking] = useState(false)
   const [draftUrl, setDraftUrl] = useState(settings.url)
-  const [draftWasm, setDraftWasm] = useState(settings.wasmUrl || '')
 
   const check = useCallback(async () => {
     setChecking(true)
@@ -48,13 +44,6 @@ export default function Settings({ onExit, profile, onProfile }) {
     update({ url })
   }
 
-  const applyWasm = () => {
-    const wasmUrl = draftWasm.trim()
-    setDraftWasm(wasmUrl)
-    resetWasmEngine()
-    setSettings(setConverterSettings({ wasmUrl }))
-  }
-
   return (
     <div className="home settings">
       <header className="homehead">
@@ -80,153 +69,49 @@ export default function Settings({ onExit, profile, onProfile }) {
         </div>
       </section>
 
-      {/* ---- Word to PDF conversion --------------------------------------- */}
+      {/* ---- Advanced: converter setup ----------------------------------- */}
+      {/* Folded away on purpose. A technician never needs this: conversion is
+          automatic and picks the best route by itself. It is here for whoever
+          sets up the office converter, so a tablet can be pointed at it. */}
       <section className="homecard">
-        <h2>Word → PDF conversion</h2>
-        <p className="cardhint">
-          Word documents have to become PDFs before they can be filled in. With the
-          converter running, LibreOffice does it — the layout is identical to Word and
-          the text stays selectable. Without it, the app converts in the browser, which
-          works offline but only approximates the layout.
-        </p>
-
-        <ConverterStatus status={status} checking={checking} onRetest={check} />
-
-        <fieldset className="settingfield">
-          <legend>How to convert</legend>
-          {[
-            ['auto', 'Automatic (recommended)', 'Use the converter when it can be reached, otherwise convert in the browser.'],
-            ['service', 'Always use the converter', 'Never fall back. Opening a Word file reports an error if the converter is down.'],
-            ['browser', 'Approximate copy in the browser',
-              'Never contacts a converter. Rebuilds the Word file offline — ruled cells, column '
-              + 'widths and page breaks move. Never for a controlled or issued document.'],
-          ].map(([value, label, help]) => (
-            <label key={value} className={'radiorow' + (settings.mode === value ? ' on' : '')}>
-              <input type="radio" name="convmode" value={value}
-                checked={settings.mode === value}
-                onChange={() => update({ mode: value })} />
-              <span>
-                <b>{label}</b>
-                <small>{help}</small>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-
-        <fieldset className="settingfield">
-          <legend>PDF quality</legend>
-          <div className="segmented">
-            {Object.keys(QUALITY_LABELS).map((q) => (
-              <button key={q} className={settings.quality === q ? 'on' : ''}
-                onClick={() => update({ quality: q })}>{QUALITY_LABELS[q]}</button>
-            ))}
-          </div>
-          <small className="settinghelp">{QUALITY_HELP[settings.quality]}</small>
-          <small className="settinghelp">
-            Every setting keeps text, tables and lines as vector graphics — this only
-            changes how photographs and logos are compressed.
-          </small>
-        </fieldset>
-
-        <fieldset className="settingfield">
-          <legend>Converter address</legend>
-          <p className="settinghelp">
-            Leave blank to search automatically. Set it when the converter runs on a
-            different machine — on a tablet, that is the office computer’s address.
+        <details className="settinghelpbox advanced">
+          <summary>Advanced — Word conversion setup</summary>
+          <p className="cardhint">
+            Word documents are converted to PDF automatically before they are filled in.
+            Nothing here needs changing day to day.
           </p>
-          <div className="worow">
-            <input className="woinput" placeholder="http://192.168.1.20:8787"
-              value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') applyUrl() }}
-              inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-            <button onClick={applyUrl} disabled={draftUrl.trim() === settings.url}>Save &amp; test</button>
-          </div>
-        </fieldset>
 
-        <fieldset className="settingfield">
-          <legend>LibreOffice inside the website</legend>
-          <p className="settinghelp">
-            The same LibreOffice, compiled to WebAssembly and run inside this page — nothing to
-            install and no converter machine. When no converter is reachable, the app fetches
-            the engine (a one-time ~78 MB download from a free public CDN), keeps it on this
-            device, and converts Word documents exactly — after the first download it works
-            with no network at all.
-          </p>
-          <label className={'radiorow' + (settings.deviceEngine !== 'off' ? ' on' : '')}>
-            <input type="checkbox"
-              checked={settings.deviceEngine !== 'off'}
-              onChange={(e) => {
-                resetWasmEngine()
-                update({ deviceEngine: e.target.checked ? 'on' : 'off' })
-              }} />
-            <span>
-              <b>Convert in this browser when no converter is reachable</b>
-              <small>Exact layout, from LibreOffice itself. Slower than the converter service.</small>
-            </span>
-          </label>
-          {settings.deviceEngine !== 'off' && isolationProblem() && (
-            <p className="convwarn">{isolationProblem()}</p>
-          )}
-          {settings.deviceEngine !== 'off' && !isolationProblem() && (
-            <small className="settinghelp">
-              This page is cross-origin isolated, so the engine can run. It is downloaded the
-              first time a Word document is opened with no converter reachable.
-            </small>
-          )}
-          <p className="convwarn">
-            <b>Slower than the converter service, and EMF drawings come out blank.</b> Typical
-            forms convert in seconds on a desktop; an image-heavy procedure on a modest tablet
-            can take minutes. This engine build has two faults the app works around. It stalls
-            on the picture formats Word uses (PNG and JPEG included) and on EMF/WMF drawings,
-            so every picture is re-encoded for it before it sees the document: a logo in the
-            page header converts, exactly and with its transparency, while EMF/WMF drawings
-            are left as blank space and a banner above the document says so. And a freshly
-            started engine stops responding at random on its first conversion, so each engine
-            must first convert a tiny test document — one that stalls is restarted, which is
-            why the opening screen sometimes says so. A real conversion that makes no progress
-            is restarted once and then stopped after {Math.round(STALL_LIMIT_MS / 60000)}{' '}
-            minutes rather than left running, and Cancel stops it at once. The converter
-            service has neither fault, renders everything in seconds, and is still the better
-            route wherever one machine can be kept running.
-          </p>
-          <details className="settinghelpbox">
-            <summary>Engine files address (advanced)</summary>
+          <ConverterStatus status={status} checking={checking} onRetest={check} />
+
+          <fieldset className="settingfield">
+            <legend>Converter address</legend>
             <p className="settinghelp">
-              Leave blank to use the built-in source ({DEFAULT_ENGINE_ASSETS}). Set it when
-              this network cannot reach the CDN: copy the engine files to any web server and
-              give their address here. Both the compressed (.wasm.gz/.data.gz) and plain
-              layouts are accepted.
+              Leave blank to search automatically. Set it when the converter runs on a
+              different machine — on a tablet, that is the office computer’s address.
             </p>
             <div className="worow">
-              <input className="woinput" placeholder={DEFAULT_ENGINE_ASSETS}
-                value={draftWasm} onChange={(e) => setDraftWasm(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') applyWasm() }}
+              <input className="woinput" placeholder="http://192.168.1.20:8787"
+                value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') applyUrl() }}
                 inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-              <button onClick={applyWasm} disabled={draftWasm.trim() === (settings.wasmUrl || '')}>
-                Save
-              </button>
+              <button onClick={applyUrl} disabled={draftUrl.trim() === settings.url}>Save &amp; test</button>
             </div>
-          </details>
-          <small className="settinghelp">
-            The engine carries its own fonts and cannot see the ones installed here, so
-            Verdana, Segoe UI and MS Gothic are substituted on every device alike. A
-            converter machine that has those fonts licensed is still the exact route.
-          </small>
-        </fieldset>
+          </fieldset>
 
-        <details className="settinghelpbox">
-          <summary>How do I start the converter?</summary>
-          <p>On the computer that will do the converting, once:</p>
-          <ol>
-            <li>Install LibreOffice (free) and, on Linux, <code>python3-uno</code>.</li>
-            <li>In the app folder run <code>npm run setup-fonts</code> to install the
-              matching fonts.</li>
-            <li>Run <code>npm run serve</code> and leave it running.</li>
-          </ol>
-          <p>
-            It prints the addresses it is reachable on. Open one of those on a tablet and
-            the app finds the converter by itself — there is nothing to type in here.
-          </p>
+          <details className="settinghelpbox">
+            <summary>How do I start the converter?</summary>
+            <p>On the computer that will do the converting, once:</p>
+            <ol>
+              <li>Install LibreOffice (free) and, on Linux, <code>python3-uno</code>.</li>
+              <li>In the app folder run <code>npm run setup-fonts</code> to install the
+                matching fonts.</li>
+              <li>Run <code>npm run serve</code> and leave it running.</li>
+            </ol>
+            <p>
+              It prints the addresses it is reachable on. Open one of those on a tablet and
+              the app finds the converter by itself — there is nothing to type in here.
+            </p>
+          </details>
         </details>
       </section>
     </div>

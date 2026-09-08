@@ -13,8 +13,6 @@ roughly in order of time saved per dollar of effort.
 - **Tap OK / Fail / N/A** tri-state cells (blank → OK → Fail → N/A), no dropdowns.
 - **Profile autofill**: name + SAP ID + today's date filled in automatically on open.
 - **Page picker**: skip the reading pages, fill only the pages that matter.
-- **Document editor**: a Word/Adobe-style editor (text, formatting, layout, tables, images) so
-  engineers can *update* forms, not just fill them — exports PDF or a re-editable HTML file.
 
 ## The version-drift problem (important)
 

@@ -4,7 +4,6 @@ import { bakePdf } from './bake.js'
 import { fileToPdfBytes } from './convert.js'
 import { loadTemplate, saveTemplate, findTemplateByDocKey } from './store.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
-import DocEditor from './DocEditor.jsx'
 import Settings from './Settings.jsx'
 import { discoverConverter, getConverterSettings, lastConverterStatus } from './converter.js'
 import { wasmAvailable, deviceEngineEnabled, isolationProblem, STALL_LIMIT_MS } from './wasmConverter.js'
@@ -68,8 +67,7 @@ const instantiate = (fields) =>
   fields.map((f) => ({ ...f, id: nextId(), value: f.type === 'signature' ? null : '' }))
 
 export default function App() {
-  const [screen, setScreen] = useState('home') // 'home' | 'editor' | 'edit' | 'settings'
-  const [editorInit, setEditorInit] = useState(null) // { html, name } for the doc editor
+  const [screen, setScreen] = useState('home') // 'home' | 'editor' | 'settings' | 'opening' | 'approx'
   const [online, setOnline] = useState(navigator.onLine)
   // Whether a LibreOffice converter is reachable. Probed once in the
   // background on load so the home screen can say which kind of conversion the
@@ -352,14 +350,6 @@ export default function App() {
     fileRef.current?.click()
   }
 
-  // ---- document editor ----------------------------------------------------
-  // Open the Word/Adobe-style editor. Starts blank; the editor itself can open
-  // a .docx or a previously-saved .html to edit.
-  const openEditor = () => {
-    setEditorInit({ html: '', name: 'document' })
-    setScreen('edit')
-  }
-
   const saveAsTemplate = async () => {
     if (!fields.length) { alert('Add some fields first.'); return }
     const name = window.prompt('Name this form template (e.g. “Pump Inspection Sheet”):', docTitle || fileName)
@@ -555,17 +545,6 @@ export default function App() {
   })
   const pagesWithFields = () => new Set(fields.map((f) => f.page))
 
-  // ================= DOCUMENT EDITOR =================
-  if (screen === 'edit') {
-    return (
-      <DocEditor
-        initialHtml={editorInit?.html || ''}
-        initialName={editorInit?.name || 'document'}
-        onExit={goHome}
-      />
-    )
-  }
-
   // ================= OPENING A DOCUMENT =================
   // Shown from the moment a file is chosen until the document is on screen.
   // A long conversion used to happen behind the home screen, which read as the
@@ -656,24 +635,16 @@ export default function App() {
             </button>
           </div>
 
-          <div className="approxroute muted">
-            <b>3 · LibreOffice inside the website</b>
-            <p>
-              {deviceEngineEnabled()
-                ? isolationProblem()
-                : 'The app can also convert with LibreOffice running inside this page — no '
-                  + 'install, exact layout, slower. It is switched off in Settings.'}
-            </p>
-          </div>
+          {deviceEngineEnabled() && isolationProblem() && (
+            <div className="approxroute muted">
+              <b>3 · LibreOffice inside the website</b>
+              <p>{isolationProblem()}</p>
+            </div>
+          )}
 
           <div className="openingactions approxactions">
             <button onClick={() => { setApproxAsk(null); setScreen('home') }}>Cancel</button>
           </div>
-          <p className="approxfoot">
-            An approximate copy can still be produced on purpose — <i>Always convert in the
-            browser</i>, in Settings. Never for a document that is controlled, issued or held
-            as a record.
-          </p>
         </section>
       </div>
     )
@@ -696,10 +667,11 @@ export default function App() {
   }
 
   // ================= HOME SCREEN =================
-  // Deliberately quiet: two things to do, said plainly, with everything else
-  // (status, settings, provenance) demoted to the footer where it can be
-  // glanced at rather than read. A technician opening this on a tablet in a
-  // plant room should see the one button they came for, not a control panel.
+  // Deliberately quiet: one thing to do, said plainly, with everything else
+  // (status, provenance) demoted to the footer where it can be glanced at
+  // rather than read. A technician opening this on a tablet in a plant room
+  // should see the one button they came for, not a control panel. Settings
+  // exists for their name and SAP ID; everything else in it is for setup.
   if (screen === 'home') {
     return (
       <div className="landing">
@@ -747,34 +719,19 @@ export default function App() {
               <span className="choice-go">Choose a file</span>
             </button>
 
-            <button className="choice" onClick={openEditor}>
-              <span className="choice-icon" aria-hidden="true">
-                <svg viewBox="0 0 32 32" width="26" height="26" fill="none"
-                  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M25 5.5a3 3 0 0 1 4.2 4.2L14 25l-5.5 1.5L10 21z" />
-                  <path d="M4 28h13" />
-                </svg>
-              </span>
-              <span className="choice-title">Edit a document</span>
-              <span className="choice-note">
-                Write a new document or open an existing one and change the wording, formatting and layout.
-              </span>
-              <span className="choice-go">Open the editor</span>
-            </button>
           </div>
 
           {busy && <div className="landing-busy">{busy}</div>}
 
           <footer className="landing-foot">
             <div className="statusrow">
-              <button className={'status ' + (converter == null ? 'wait' : converter.ok ? 'ok' : 'warn')}
-                onClick={() => setScreen('settings')}
+              <span className={'status ' + (converter == null ? 'wait' : converter.ok ? 'ok' : 'warn')}
                 title={converter?.ok
                   ? `Word documents convert with ${converter.info?.engine || 'LibreOffice'} — exact layout`
                   : 'Word documents convert in the browser — approximate layout'}>
                 <span className="dot" />
                 {converter == null ? 'Checking conversion' : converter.ok ? 'Exact Word conversion' : 'Browser conversion'}
-              </button>
+              </span>
               <span className={'status ' + (online ? 'ok' : 'warn')}>
                 <span className="dot" />{online ? 'Online' : 'Offline — still works'}
               </span>

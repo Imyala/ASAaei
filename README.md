@@ -1,14 +1,15 @@
 # ASAaei
 
-A browser-based, **offline-capable (installable PWA)** app for working with documents on any
-device — iPad, tablet, or desktop. It does two things, from one home screen:
+A browser-based, **offline-capable (installable PWA)** app for technicians filling in documents
+on any device — iPad, tablet, or desktop. It does one thing, from one home screen:
 
 - **📝 Fill out a document** — open a PDF or Word form, get its fillable boxes detected
   automatically (text, dropdowns, OK/Fail/N/A tap-cells, signatures), fill, sign, lock, and save a
-  finished PDF. *For technicians on the job.*
-- **✏️ Edit a document** — open or create a document and change its **text, formatting and
-  layout**, like Word: headings, bold/italic/underline, colour, alignment, lists, tables and
-  images. Export a print-ready PDF, or a re-editable HTML file. *For engineers updating forms.*
+  finished PDF.
+
+The home screen is deliberately bare — one button and the technician's name — so there is
+nothing to get wrong in the field. The Settings screen holds the name and SAP ID, with converter
+setup folded away under **Advanced** for whoever runs the office converter.
 
 Nothing is uploaded to anyone else's server, and you save the finished file wherever you like.
 
@@ -25,7 +26,7 @@ has three routes and picks the best reachable one automatically:
 | Speed (35-page form) | **~1.7 s** | seconds on a desktop; longer on tablets and image-heavy documents | ~30 s+ |
 | Field boxes | From the document's own ruled cells | From the document's own ruled cells | Measured off a re-flowed HTML copy |
 | Needs | LibreOffice on one machine | Nothing — a one-time ~78 MB download, then works offline | Nothing |
-| Used | Whenever it is reachable | Automatically when no service is reachable | Only if selected in Settings |
+| Used | Whenever it is reachable | Automatically when no service is reachable | Never — no longer offered in the app |
 
 **Out of the box the app converts exactly with nothing installed**: the website carries the
 LibreOffice engine itself (WebAssembly). The first Word document triggers a one-time ~78 MB
@@ -193,8 +194,9 @@ stops at 50 MB per file):
   every file clears the CDN limit (~78 MB total). The app decompresses them
   with the browser's `DecompressionStream`, hands the engine same-origin
   `blob:` URLs, and keeps the compressed files in the Cache API so the
-  download happens once per device. A self-hosted copy can be named in
-  Settings for a network that cannot reach the CDN.
+  download happens once per device. A self-hosted copy can be named by
+  storing a `wasmUrl` in the app's saved settings (there is no screen for
+  it) for a network that cannot reach the CDN.
 
 The page must be **cross-origin isolated** (`Cross-Origin-Opener-Policy:
 same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) because the build
@@ -263,14 +265,13 @@ without converting anything.
 
 **A Word file is opened exactly or not at all.** With no converter service reachable, the
 engine inside the website does the conversion — same LibreOffice, exact layout, just slower.
-Only when that engine is switched off in Settings, or the page genuinely cannot run it (a plain
-`http://` address on another machine is not a secure context, so the browser withholds the
-threading the engine needs), does ASAaei refuse the document and offer these routes — it does
-not rebuild it in the browser. An approximate rebuild moves ruled cells, column widths, headers
-and page breaks; a controlled document that has moved is not a rougher copy of itself, it is a
-different document, and no warning banner makes one safe to sign or file. The in-browser route
-still exists for a rough working copy, but only for someone who selects **Approximate copy in
-the browser** in Settings, and the result is labelled as not the original wherever it is shown.
+Only when the page genuinely cannot run that engine (a plain `http://` address on another
+machine is not a secure context, so the browser withholds the threading the engine needs) does
+ASAaei refuse the document and offer these routes — it does not rebuild it in the browser. An
+approximate rebuild moves ruled cells, column widths, headers and page breaks; a controlled
+document that has moved is not a rougher copy of itself, it is a different document, and no
+warning banner makes one safe to sign or file. The approximate in-browser route is still in the
+code but is no longer offered anywhere in the app, so a technician cannot pick it by mistake.
 
 > `python3-uno` is what makes it fast. It lets the server keep LibreOffice warm and hand it
 > documents over a socket, instead of starting LibreOffice from scratch for every file (which costs
@@ -337,31 +338,22 @@ npm test                 # unit tests
   signatures may be added.
 - **Save PDF:** exports a flattened PDF, keeping the text selectable when the converter produced it.
 
-## Edit a document
-
-- Start blank, or **Open** a Word (`.docx`) or a previously-saved HTML file.
-- Rich formatting toolbar: paragraph styles and headings, bold / italic / underline /
-  strikethrough, text colour and highlight, alignment, bulleted/numbered lists, indent, tables,
-  images, links, and undo/redo.
-- **Export PDF** — through LibreOffice when the converter is reachable, so the PDF has real
-  selectable text at a fraction of the size; otherwise the in-browser rasteriser. The app says
-  which one it used.
-- **Save (HTML)** for a self-contained file that re-opens in the editor for further editing.
-
 ## Settings
 
-One screen, reachable from the home header:
+One small screen, reachable from the home header:
 
-- **Your details** — name and SAP ID, filled into forms automatically.
-- **How to convert** — Automatic (recommended), Always use the converter, or Always convert in the
-  browser.
-- **LibreOffice inside the website** — on by default; switch it off, or point it at a
-  self-hosted copy of the engine files for a network that cannot reach the CDN.
-- **PDF quality** — smaller file / balanced / best quality. This only changes how photographs and
-  logos are compressed; text, tables and lines are vector in every setting.
-- **Converter address** — leave blank to find it automatically; set it when the converter runs on
-  another machine.
-- **Live status** — which engine is in use, how fast it is, and any missing fonts.
+- **Your details** — name and SAP ID, filled into forms automatically. This is the only thing a
+  technician ever needs to touch.
+- **Advanced — Word conversion setup** (collapsed) — for whoever sets up the office converter:
+  - **Live status** — which engine is in use, how fast it is, and any missing fonts.
+  - **Converter address** — leave blank to find it automatically; set it when the converter runs
+    on another machine.
+  - **How do I start the converter?** — the three-step setup.
+
+Conversion is always automatic: the converter service when it is reachable, otherwise the
+LibreOffice engine inside the website. The old choices (always use the converter, approximate
+copy in the browser, PDF quality, switching the in-page engine off) were removed from the screen
+so there is nothing to set wrongly; a stored mode from an earlier build is ignored.
 
 ## Offline / installable
 

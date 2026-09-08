@@ -52,7 +52,7 @@ body {
 button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* ---------- home (landing) ---------- */
-/* The calm screen: a soft ground, one column, two choices. Everything is sized
+/* The calm screen: a soft ground, one column, one choice. Everything is sized
    for a gloved tap on a tablet — the cards are the hit target, not a small
    button inside them. */
 .landing {
@@ -96,8 +96,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .landing-greeting b { color: #33405c; font-weight: 600; }
 
-/* the two choices */
-.choices { display: grid; gap: 16px; margin-top: 16px; grid-template-columns: 1fr 1fr; }
+/* the one choice */
+.choices { display: grid; gap: 16px; margin-top: 16px; grid-template-columns: 1fr; }
 .choice {
   display: flex; flex-direction: column; align-items: flex-start; gap: 0;
   text-align: left; padding: 24px 22px 20px;
@@ -150,7 +150,6 @@ button.status:hover { color: var(--blue-2); }
 
 @media (max-width: 620px) {
   .landing { padding: 28px 16px 28px; }
-  .choices { grid-template-columns: 1fr; }
   .landing-head h1 { font-size: 26px; }
   .landing-sub { font-size: 14.5px; margin-top: 14px; }
   .choice { padding: 20px 18px 18px; }
@@ -406,6 +405,9 @@ button.danger:hover { background: #fdf1f2; }
 .settinghelpbox { margin-top: 14px; font-size: 13px; color: #5a647a; line-height: 1.6; }
 .settinghelpbox summary { cursor: pointer; font-weight: 600; color: var(--blue); padding: 6px 0; }
 .settinghelpbox ol { margin: 6px 0; padding-left: 22px; }
+.settinghelpbox.advanced { margin-top: 0; }
+.settinghelpbox.advanced > summary { font-size: 15px; padding: 2px 0; }
+.settinghelpbox.advanced[open] > summary { margin-bottom: 6px; }
 
 /* ---------- fidelity notices ---------- */
 .fidelity-bar {
