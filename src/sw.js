@@ -33,7 +33,39 @@ import { clientsClaim } from 'workbox-core'
 self.skipWaiting()
 clientsClaim()
 cleanupOutdatedCaches()
-precache(self.__WB_MANIFEST)
+const MANIFEST = self.__WB_MANIFEST
+precache(MANIFEST)
+
+// The page this worker serves for every navigation is fetched HERE, at
+// install, at a URL that carries this build's own revision of index.html.
+// Workbox's precache asks for plain "index.html", and for up to ten minutes
+// after a deploy the GitHub Pages CDN answers that with the PREVIOUS page —
+// which names a script the deploy just deleted. A worker that precached that
+// would serve a blank screen on every device for as long as it lived. A URL
+// no cache has seen goes through to the origin, and the page that comes back
+// must name a script in this worker's own list, or the install fails and the
+// browser simply tries the update again on a later visit while the previous
+// worker keeps serving the previous, consistent build.
+const SHELL_CACHE = 'asaaei-shell-v1'
+const SHELL_KEY = 'shell'
+const shellEntry = MANIFEST.find((e) => e.url === 'index.html' || e.url.endsWith('/index.html'))
+const ownAssets = new Set(MANIFEST.map((e) => new URL(e.url, self.location.href).pathname))
+self.addEventListener('install', (event) => {
+  if (!shellEntry) return
+  event.waitUntil((async () => {
+    const url = new URL(shellEntry.url, self.location.href)
+    url.searchParams.set('build', shellEntry.revision || 'x')
+    const res = await fetch(url.href, { cache: 'reload', credentials: 'same-origin' })
+    if (!res.ok) throw new Error(`shell: HTTP ${res.status}`)
+    const html = await res.clone().text()
+    const src = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/)?.[1]
+    if (!src || !ownAssets.has(new URL(src, url.href).pathname)) {
+      throw new Error('shell: the page served is not this build')
+    }
+    const cache = await caches.open(SHELL_CACHE)
+    await cache.put(SHELL_KEY, res)
+  })())
+})
 
 // COOP/COEP make the page eligible for SharedArrayBuffer; CORP lets this
 // site's own files be loaded by its workers under that same policy.
@@ -49,6 +81,17 @@ function withIsolation(res) {
 }
 
 async function respond(req) {
+  // A navigation gets THIS worker's own copy of the page, whatever the query
+  // string says. The page and the worker are one build, so the page always
+  // names assets this worker has; going to the network instead could hand
+  // back a stale copy from a CDN that names assets already deleted — a blank
+  // screen — or silently flip the app to a different build than the worker's.
+  // The worker itself updates through the browser's own sw.js check.
+  if (req.mode === 'navigate') {
+    const own = await (await caches.open(SHELL_CACHE)).match(SHELL_KEY).catch(() => null)
+    const shell = own || await matchPrecache('index.html')
+    if (shell) return withIsolation(shell)
+  }
   // Precached build asset → serve it from the cache, with the headers on.
   const key = getCacheKeyForURL(req.url)
   if (key) {

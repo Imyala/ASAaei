@@ -359,10 +359,20 @@ so there is nothing to set wrongly; a stored mode from an earlier build is ignor
 
 The home footer shows the build stamp with a **check for update** link. It asks the server for
 `version.json` (written at build time, never cached by the service worker) and compares it with
-the running build. Same build: it says so. Newer build: it drops the service worker and its
-precache and reloads, so the fresh build is fetched. The LibreOffice engine cache is kept, so an
-update never repeats the 78 MB engine download. Offline, or with the server unreachable, it says
-that rather than pretending.
+the running build. Same build: it says so. Newer build: it asks the service worker registration
+to update — the browser fetches the new `sw.js`, the new worker precaches the new build and
+takes over the page, and the page reloads onto it. Nothing is wiped, so an update never repeats
+the 78 MB engine download. If the new worker is not there yet (GitHub Pages' CDN can serve the
+previous files for up to ten minutes after a deploy) it says the build is still being published
+and leaves the working app alone. Offline, or with the server unreachable, it says that rather
+than pretending.
+
+The worker serves navigations from its own copy of the page, so a stale CDN can never hand a
+device a page that names deleted files, and the page registers the worker itself with the HTTP
+cache bypassed and a spaced-out retry, so a device that catches the CDN mid-deploy recovers on
+its own within a few minutes. Cross-origin isolation (needed for the in-website LibreOffice
+engine) comes from the worker's headers plus one guarded reload; that guard is cleared whenever
+a page loads without a worker, so a self-heal or an update can never leave the page un-isolated.
 
 ## Offline / installable
 

@@ -61,6 +61,9 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'sw.js',
       registerType: 'autoUpdate',
+      // index.html registers the worker itself, with updateViaCache 'none'
+      // and a retry — the generated registerSW.js does neither.
+      injectRegister: null,
       includeAssets: ['icon.svg'],
       manifest: {
         name: 'ASAaei Document Forms',

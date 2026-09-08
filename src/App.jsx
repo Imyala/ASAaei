@@ -464,16 +464,18 @@ export default function App() {
   // indistinguishable, from the user's side, from a fix that was never made.
   // "Check for update": ask the server which build it is serving (version.json
   // is written at build time and never precached, so the answer is always the
-  // deployed one). Same build → say so and stop. A newer build → first make
-  // sure the new page and its script can actually be fetched, then drop the
-  // service worker and its precache and load the page again at a URL with a
-  // fresh query parameter, so no cache between here and the origin hands back
-  // the old page. That last part matters on GitHub Pages: its CDN keeps
-  // serving the previous index.html for up to ten minutes after a deploy
-  // while the old hashed script it names is already gone — a plain reload in
-  // that window is a blank screen. If the new build is not fully published
-  // yet, say so and change nothing. The LibreOffice engine cache is left
-  // alone throughout: a 78 MB download that does not change between builds.
+  // deployed one). Same build → say so and stop. A newer build → ask the
+  // service worker registration to update: the browser fetches the new sw.js,
+  // the new worker precaches the new build, takes over the page (skipWaiting
+  // + clientsClaim in sw.js) and the page reloads onto it — the worker serves
+  // its own copy of the page, so this works even while the GitHub Pages CDN
+  // is still handing out the previous index.html. Nothing is wiped: the old
+  // worker simply retires, and the LibreOffice engine cache (a 78 MB download
+  // that does not change between builds) is never touched. If the new worker
+  // is not there yet (the CDN still serving the old sw.js, or its files not
+  // all published), say so and change nothing — the working app stays up.
+  // Without a worker at all (dev server, an unsupported browser) the page is
+  // simply loaded again at a fresh URL.
   const checkForUpdate = async () => {
     setUpdateBusy(true)
     setUpdateNote('Checking…')
@@ -495,31 +497,36 @@ export default function App() {
       return
     }
     setUpdateNote(`Updating to build ${latest}…`)
-    const target = new URL(location.href)
-    target.searchParams.set('v', latest)
-    try {
-      // The page at the fresh URL, and the script it names, must both be there.
-      const html = await (await fetch(target.href, { cache: 'no-store' })).text()
-      const src = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/)?.[1]
-      const script = src ? new URL(src, target.href) : null
-      if (!script || !(await fetch(script.href, { method: 'HEAD', cache: 'no-store' })).ok) throw new Error('not published')
-    } catch {
+    const stillPublishing = () => {
       setUpdateNote(`Build ${latest} is still being published — try again in a few minutes.`)
       setUpdateBusy(false)
+    }
+    const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration().catch(() => null) : null
+    if (!reg) {
+      const target = new URL(location.href)
+      target.searchParams.set('v', latest)
+      try { sessionStorage.clear() } catch { /* private mode */ }
+      location.replace(target.href)
       return
     }
-    try {
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations()
-        await Promise.all(regs.map((r) => r.unregister()))
-      }
-      if (window.caches?.keys) {
-        const keys = await caches.keys()
-        await Promise.all(keys.filter((k) => k !== ENGINE_CACHE).map((k) => caches.delete(k)))
-      }
-    } catch { /* a browser that blocks either one still loads the page below */ }
+    // The new worker announces itself by taking control of this page.
+    const claimed = new Promise((resolve) => {
+      navigator.serviceWorker.addEventListener('controllerchange', () => resolve(true), { once: true })
+      setTimeout(() => resolve(false), 90000)
+    })
+    try { await reg.update() } catch { stillPublishing(); return }
+    // No installing worker within a few seconds means the browser found sw.js
+    // unchanged: the deploy has not reached the CDN yet.
+    let seen = !!(reg.installing || reg.waiting)
+    for (let i = 0; i < 20 && !seen; i++) {
+      await new Promise((r) => setTimeout(r, 250))
+      seen = !!(reg.installing || reg.waiting)
+    }
+    if (!seen) { stillPublishing(); return }
+    setUpdateNote(`Fetching build ${latest}…`)
+    if (!(await claimed)) { stillPublishing(); return }
     try { sessionStorage.clear() } catch { /* private mode */ }
-    location.replace(target.href)
+    location.reload()
   }
 
   const goHome = () => {
@@ -676,6 +683,17 @@ export default function App() {
             <div className="approxroute muted">
               <b>3 · LibreOffice inside the website</b>
               <p>{isolationProblem()}</p>
+              {!window.crossOriginIsolated && window.isSecureContext && (
+                <button onClick={() => {
+                  // The page arranges its own isolation on reload once the
+                  // service worker is in place; a stale "already reloaded"
+                  // note from earlier in this tab must not veto that.
+                  try { sessionStorage.removeItem('asaaei:coi-reload') } catch { /* private mode */ }
+                  location.reload()
+                }}>
+                  Reload the page
+                </button>
+              )}
             </div>
           )}
 

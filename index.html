@@ -27,6 +27,9 @@
         function heal(reason) {
           if (sessionStorage.getItem(GUARD)) return // already tried this session
           try { sessionStorage.setItem(GUARD, reason || '1') } catch (e) {}
+          // The worker is about to go, so the "already reloaded for isolation"
+          // note must go with it: the re-installed worker needs that reload.
+          try { sessionStorage.removeItem('asaaei:coi-reload') } catch (e) {}
           var jobs = []
           if ('serviceWorker' in navigator) {
             jobs.push(
@@ -77,17 +80,27 @@
       })()
     </script>
     <script>
-      // Cross-origin isolation, on hosts that cannot set headers (GitHub
-      // Pages). The service worker (src/sw.js) adds the COOP/COEP headers the
-      // in-website LibreOffice engine needs — but a page only becomes isolated
-      // when its OWN response carried them, which for a freshly-installed
-      // worker means one reload. Do that reload here, once, guarded so a page
-      // that cannot be isolated (plain http from another machine) never loops.
-      // On a server that already sends the headers (npm run serve, the dev
-      // server) crossOriginIsolated is already true and this does nothing.
+      // The service worker: offline precache, and — on hosts that cannot set
+      // headers (GitHub Pages) — the COOP/COEP headers that make the page
+      // cross-origin isolated so the in-website LibreOffice engine can run.
+      // A page only becomes isolated when its OWN response carried the
+      // headers, which for a freshly-installed worker means one reload. That
+      // reload is done here, once, guarded so a page that cannot be isolated
+      // (plain http from another machine) never loops. On a server that
+      // already sends the headers (npm run serve, the dev server)
+      // crossOriginIsolated is true from the start and the reload never fires.
       (function () {
-        if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return
+        if (!('serviceWorker' in navigator)) return
         var KEY = 'asaaei:coi-reload'
+        // The guard exists to stop a loop: controlled, reloaded, still not
+        // isolated, reload again... That loop can only start from a page that
+        // was controlled when it loaded. A page that loads uncontrolled (first
+        // visit, after "check for update", after a self-heal) has no such
+        // history, so any note left by an earlier page in this tab is stale
+        // and would wrongly veto the one reload this page needs.
+        if (!navigator.serviceWorker.controller) {
+          try { sessionStorage.removeItem(KEY) } catch (e) {}
+        }
         function reloadOnce() {
           if (window.crossOriginIsolated) return
           if (!navigator.serviceWorker.controller) return // not controlled yet
@@ -95,9 +108,35 @@
           try { sessionStorage.setItem(KEY, '1') } catch (e) {}
           location.reload()
         }
-        navigator.serviceWorker.ready.then(reloadOnce).catch(function () {})
-        // First-ever visit: the worker claims the page moments after install.
-        navigator.serviceWorker.addEventListener('controllerchange', reloadOnce)
+        // updateViaCache 'none': the worker script always comes from the
+        // network, never the browser's HTTP cache, so a new deploy is seen on
+        // the next visit rather than up to a day later.
+        function register() {
+          return navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' })
+        }
+        // Registration can fail outright — for up to ten minutes after a
+        // deploy the GitHub Pages CDN can still hand out the previous sw.js,
+        // whose precache list names files the deploy deleted. Until it
+        // succeeds the page is not isolated and Word files cannot convert, so
+        // try again, a few times, spaced out; the first success claims the
+        // page and the reload above fires.
+        var attempts = [6000, 20000, 45000, 90000, 180000]
+        function retry(i) {
+          if (i >= attempts.length) return
+          setTimeout(function () {
+            if (window.crossOriginIsolated || navigator.serviceWorker.controller) return
+            register().catch(function () {}).then(function () { retry(i + 1) })
+          }, attempts[i])
+        }
+        window.addEventListener('load', function () {
+          register().catch(function () {})
+          if (!window.crossOriginIsolated) retry(0)
+        })
+        if (!window.crossOriginIsolated) {
+          navigator.serviceWorker.ready.then(reloadOnce).catch(function () {})
+          // First-ever visit: the worker claims the page moments after install.
+          navigator.serviceWorker.addEventListener('controllerchange', reloadOnce)
+        }
       })()
     </script>
   </head>
