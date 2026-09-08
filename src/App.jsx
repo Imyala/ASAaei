@@ -68,11 +68,6 @@ const instantiate = (fields) =>
 
 export default function App() {
   const [screen, setScreen] = useState('home') // 'home' | 'editor' | 'settings' | 'opening' | 'approx'
-  const [online, setOnline] = useState(navigator.onLine)
-  // Whether a LibreOffice converter is reachable. Probed once in the
-  // background on load so the home screen can say which kind of conversion the
-  // next Word file will get, before the user commits to opening one.
-  const [converter, setConverter] = useState(lastConverterStatus)
   // How the document now open was produced: 'exact' (LibreOffice / a real PDF)
   // or 'approximate' (in-browser rasteriser).
   const [fidelity, setFidelity] = useState('')
@@ -121,16 +116,12 @@ export default function App() {
 
   const selected = fields.find((f) => f.id === selectedId) || null
 
-  useEffect(() => {
-    const on = () => setOnline(true), off = () => setOnline(false)
-    window.addEventListener('online', on); window.addEventListener('offline', off)
-    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
-  }, [])
-
-  // Look for a converter in the background. This never blocks anything: the app
-  // is fully usable while it runs, and a negative answer only means Word files
-  // take the in-browser path.
-  useEffect(() => { discoverConverter().then(setConverter) }, [])
+  // Look for a converter in the background so the first Word file opens
+  // without waiting on the probe. This never blocks anything: the app is fully
+  // usable while it runs, and a negative answer only means Word files take
+  // the in-page engine. Nothing on screen reports the answer — a technician
+  // cannot act on it, and Settings › Advanced shows it to whoever can.
+  useEffect(() => { discoverConverter() }, [])
 
   // ---- rendering a document into the editor -------------------------------
   // Page geometry comes back at once, so the document is on screen and fillable
@@ -233,7 +224,6 @@ export default function App() {
     if (/\.docx?$/i.test(file.name) && getConverterSettings().mode !== 'browser'
         && !wasmAvailable()) {
       const found = await discoverConverter()
-      setConverter(found)
       if (!found.ok) {
         setApproxAsk({ file, reason: found.reason, fix: found.fix })
         setScreen('approx')
@@ -259,8 +249,8 @@ export default function App() {
       // Which engine line to show is settled per stage below — announcing
       // "approximate" here, before knowing the route, was simply wrong: the
       // LibreOffice engine in the page converts exactly.
-      detail: isWord && converter?.ok
-        ? `Using ${converter.info?.engine || 'LibreOffice'} — the layout will match Word exactly.`
+      detail: isWord && lastConverterStatus()?.ok
+        ? `Using ${lastConverterStatus().info?.engine || 'LibreOffice'} — the layout will match Word exactly.`
         : isWord && wasmAvailable()
           ? 'Looking for a converter — without one, LibreOffice runs inside this page and the layout still matches Word exactly.'
           : isWord
@@ -658,8 +648,9 @@ export default function App() {
         onProfile={updateProfile}
         onExit={() => {
           // Re-probe on the way out: the point of visiting Settings is usually
-          // to start or point at a converter, and the home chip should say so.
-          discoverConverter({ force: true }).then(setConverter)
+          // to start or point at a converter, and the next Word file should
+          // find it without a stale "not there" answer.
+          discoverConverter({ force: true })
           setScreen('home')
         }}
       />
@@ -724,18 +715,6 @@ export default function App() {
           {busy && <div className="landing-busy">{busy}</div>}
 
           <footer className="landing-foot">
-            <div className="statusrow">
-              <span className={'status ' + (converter == null ? 'wait' : converter.ok ? 'ok' : 'warn')}
-                title={converter?.ok
-                  ? `Word documents convert with ${converter.info?.engine || 'LibreOffice'} — exact layout`
-                  : 'Word documents convert in the browser — approximate layout'}>
-                <span className="dot" />
-                {converter == null ? 'Checking conversion' : converter.ok ? 'Exact Word conversion' : 'Browser conversion'}
-              </span>
-              <span className={'status ' + (online ? 'ok' : 'warn')}>
-                <span className="dot" />{online ? 'Online' : 'Offline — still works'}
-              </span>
-            </div>
             <p>Documents are opened from this device and saved back to it. Nothing is uploaded.</p>
             <p className="build">
               Build {BUILD_ID}

@@ -130,23 +130,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   box-shadow: inset 0 0 0 1px rgba(160,120,20,.16);
 }
 
-/* quiet footer: status is available, not announced */
+/* quiet footer */
 .landing-foot { margin-top: 30px; color: #8691a8; font-size: 12.5px; line-height: 1.6; }
 .landing-foot p { margin: 0; }
 .landing-foot .build { margin-top: 4px; opacity: .65; }
-.statusrow {
-  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
-  padding-bottom: 12px; border-bottom: 1px solid rgba(38,56,102,.08);
-}
-.status {
-  display: inline-flex; align-items: center; gap: 7px;
-  border: none; background: none; padding: 4px 2px;
-  font-size: 12.5px; font-weight: 500; color: #74809a;
-}
-button.status:hover { color: var(--blue-2); }
-.status .dot { width: 7px; height: 7px; border-radius: 50%; background: #b8c1d4; }
-.status.ok .dot { background: #46a86e; }
-.status.warn .dot { background: #d79b3a; }
 
 @media (max-width: 620px) {
   .landing { padding: 28px 16px 28px; }
