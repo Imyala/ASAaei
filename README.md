@@ -123,8 +123,8 @@ document and that is a layout change like any other.
 ```
 
 Open one of those addresses on an iPad or another PC and **the app finds the converter by itself** —
-it is served from the same address, so there is nothing to configure. The home screen shows
-**Exact Word conversion** when it is working.
+it is served from the same address, so there is nothing to configure. Settings › Advanced shows
+**High-fidelity conversion is on** when it is working.
 
 > **Open the app from that address, not from the hosted copy.** A page served over `https://`
 > (the GitHub Pages build) is not allowed by the browser to call a plain `http://` address on
