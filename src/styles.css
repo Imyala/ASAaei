@@ -159,6 +159,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   .hero-body h2 { font-size: 24px; }
   .hero-cta { width: 100%; justify-content: center; }
   .steps { grid-template-columns: 1fr; gap: 8px; }
+  .spanel { padding: 20px 18px; margin-top: 20px; }
+  .spanel.quiet { padding: 0; }
+  .advanced > summary { padding: 16px 44px 16px 18px; }
+  .advanced-body { padding: 0 18px 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .hero-cta { transition: none; }
@@ -356,31 +360,46 @@ button.danger { color: #a3323f; border-color: #eccdd1; background: #fff; }
 button.danger:hover { background: #fdf1f2; }
 
 /* ---------- settings ---------- */
-.settings .homecard { padding: 20px; }
-.fieldlabel { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 180px;
-  font-size: 13px; font-weight: 600; color: #46506a; }
+/* Same ground, header and card language as the home screen. */
+.spanel {
+  margin-top: 26px; padding: 26px 28px; background: #fff; border-radius: 22px;
+  border: 1px solid rgba(38,56,102,.09);
+  box-shadow: 0 1px 2px rgba(38,56,102,.05), 0 26px 50px -30px rgba(38,56,102,.55);
+}
+.spanel + .spanel { margin-top: 16px; }
+.spanel.quiet { padding: 0; border: none; background: rgba(255,255,255,.72); box-shadow: inset 0 0 0 1px rgba(38,56,102,.06); }
+.spanel-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 18px; }
+.spanel-head h2 { margin: 0; font-size: 22px; font-weight: 700; color: #1f2a47; line-height: 1.2; }
+.spanel-head p { margin: 4px 0 0; font-size: 14px; line-height: 1.55; color: #5f6b86; }
+.avatar.big { width: 44px; height: 44px; font-size: 18px; border-radius: 14px; }
+.settings .worow { gap: 14px; }
+.fieldlabel { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 180px;
+  font-size: 12.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b7794; }
+.settings .woinput {
+  padding: 14px 16px; font-size: 17px; color: #1f2a47; border-radius: 12px;
+  border: 1px solid rgba(38,56,102,.14); background: #fbfcfe;
+}
+.settings .woinput:focus { outline: none; border-color: var(--blue-2); background: #fff; box-shadow: 0 0 0 3px rgba(59,87,166,.15); }
+.advanced > summary {
+  list-style: none; cursor: pointer; position: relative;
+  display: flex; flex-direction: column; gap: 3px; padding: 20px 52px 20px 24px;
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::after {
+  content: ''; position: absolute; right: 26px; top: 50%; width: 9px; height: 9px;
+  border-right: 2px solid #6b7794; border-bottom: 2px solid #6b7794;
+  transform: translateY(-70%) rotate(45deg); transition: transform .16s ease;
+}
+.advanced[open] > summary::after { transform: translateY(-30%) rotate(-135deg); }
+.summary-title { font-size: 15.5px; font-weight: 650; color: #26314c; }
+.summary-hint { font-size: 13px; line-height: 1.5; color: #6b7794; }
+.advanced-body { padding: 0 24px 24px; }
+.settings .settingfield { border-color: rgba(38,56,102,.12); border-radius: 14px; background: #fff; }
+.settings .convstatus { border-radius: 14px; }
+.settings .settinghelpbox { margin-top: 12px; }
 .settingfield { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; margin: 14px 0 0; }
 .settingfield legend { font-size: 13px; font-weight: 700; color: #46506a; padding: 0 6px; }
 .settinghelp { display: block; color: #6b7488; font-size: 12px; line-height: 1.5; margin-top: 8px; }
-
-/* Radio rows are big tap targets — this app is used on a tablet with gloves on. */
-.radiorow {
-  display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px;
-  border: 1px solid transparent; border-radius: 9px; cursor: pointer;
-}
-.radiorow + .radiorow { margin-top: 2px; }
-.radiorow:hover { background: #f4f7fd; }
-.radiorow.on { background: #eef3ff; border-color: #c6d6f5; }
-.radiorow input { margin-top: 3px; width: 18px; height: 18px; flex: 0 0 auto; }
-.radiorow span { display: flex; flex-direction: column; gap: 2px; }
-.radiorow b { font-size: 14px; color: #26304a; }
-.radiorow small { color: #6b7488; font-size: 12px; line-height: 1.45; }
-
-.segmented { display: flex; flex-wrap: wrap; gap: 0; }
-.segmented button { border-radius: 0; margin-left: -1px; font-size: 13px; padding: 9px 14px; }
-.segmented button:first-child { border-radius: 9px 0 0 9px; margin-left: 0; }
-.segmented button:last-child { border-radius: 0 9px 9px 0; }
-.segmented button.on { background: var(--blue-2); color: #fff; border-color: var(--blue-2); position: relative; z-index: 1; }
 
 .convstatus { border-radius: 10px; padding: 14px; font-size: 14px; }
 .convstatus.checking { background: #f4f6fa; color: #5a647a; }
@@ -411,9 +430,6 @@ button.danger:hover { background: #fdf1f2; }
 .settinghelpbox { margin-top: 14px; font-size: 13px; color: #5a647a; line-height: 1.6; }
 .settinghelpbox summary { cursor: pointer; font-weight: 600; color: var(--blue); padding: 6px 0; }
 .settinghelpbox ol { margin: 6px 0; padding-left: 22px; }
-.settinghelpbox.advanced { margin-top: 0; }
-.settinghelpbox.advanced > summary { font-size: 15px; padding: 2px 0; }
-.settinghelpbox.advanced[open] > summary { margin-bottom: 6px; }
 
 /* ---------- fidelity notices ---------- */
 .fidelity-bar {

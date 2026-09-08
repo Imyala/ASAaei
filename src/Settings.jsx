@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { discoverConverter, getConverterSettings, setConverterSettings } from './converter.js'
+import Mark from './Mark.jsx'
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -44,76 +45,89 @@ export default function Settings({ onExit, profile, onProfile }) {
     update({ url })
   }
 
+  const initial = (profile.name || '').trim().charAt(0).toUpperCase()
+
   return (
-    <div className="home settings">
-      <header className="homehead">
-        <h1>Settings</h1>
-        <button onClick={onExit}>← Back</button>
-      </header>
+    <div className="landing settings">
+      <div className="landing-inner">
+        <header className="landing-head">
+          <Mark />
+          <div className="landing-title">
+            <h1>Settings</h1>
+            <p className="landing-sub">Your details, and the office converter setup.</p>
+          </div>
+          <button className="ghostbtn" onClick={onExit}>← Back</button>
+        </header>
 
-      {/* ---- Your details ------------------------------------------------ */}
-      <section className="homecard">
-        <h2>Your details</h2>
-        <p className="cardhint">
-          Filled into every form automatically — your name, SAP ID and today’s date.
-        </p>
-        <div className="worow">
-          <label className="fieldlabel">Your name
-            <input className="woinput" placeholder="e.g. Jordan Ellis" value={profile.name || ''}
-              onChange={(e) => onProfile({ name: e.target.value })} />
-          </label>
-          <label className="fieldlabel">SAP ID
-            <input className="woinput" placeholder="e.g. 100234" value={profile.sapId || ''}
-              onChange={(e) => onProfile({ sapId: e.target.value })} />
-          </label>
-        </div>
-      </section>
-
-      {/* ---- Advanced: converter setup ----------------------------------- */}
-      {/* Folded away on purpose. A technician never needs this: conversion is
-          automatic and picks the best route by itself. It is here for whoever
-          sets up the office converter, so a tablet can be pointed at it. */}
-      <section className="homecard">
-        <details className="settinghelpbox advanced">
-          <summary>Advanced — Word conversion setup</summary>
-          <p className="cardhint">
-            Word documents are converted to PDF automatically before they are filled in.
-            Nothing here needs changing day to day.
-          </p>
-
-          <ConverterStatus status={status} checking={checking} onRetest={check} />
-
-          <fieldset className="settingfield">
-            <legend>Converter address</legend>
-            <p className="settinghelp">
-              Leave blank to search automatically. Set it when the converter runs on a
-              different machine — on a tablet, that is the office computer’s address.
-            </p>
-            <div className="worow">
-              <input className="woinput" placeholder="http://192.168.1.20:8787"
-                value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') applyUrl() }}
-                inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-              <button onClick={applyUrl} disabled={draftUrl.trim() === settings.url}>Save &amp; test</button>
+        {/* ---- Your details ------------------------------------------------ */}
+        <section className="spanel">
+          <div className="spanel-head">
+            <span className="avatar big" aria-hidden="true">{initial || '?'}</span>
+            <div>
+              <h2>Your details</h2>
+              <p>Filled into every form automatically — your name, SAP ID and today’s date.</p>
             </div>
-          </fieldset>
+          </div>
+          <div className="worow">
+            <label className="fieldlabel">Your name
+              <input className="woinput" placeholder="e.g. Jordan Ellis" value={profile.name || ''}
+                onChange={(e) => onProfile({ name: e.target.value })} />
+            </label>
+            <label className="fieldlabel">SAP ID
+              <input className="woinput" placeholder="e.g. 100234" value={profile.sapId || ''}
+                onChange={(e) => onProfile({ sapId: e.target.value })} />
+            </label>
+          </div>
+        </section>
 
-          <details className="settinghelpbox">
-            <summary>How do I start the converter?</summary>
-            <p>On the computer that will do the converting, once:</p>
-            <ol>
-              <li>Install LibreOffice (free) and, on Linux, <code>python3-uno</code>.</li>
-              <li>In the app folder run <code>npm run setup-fonts</code> to install the
-                matching fonts.</li>
-              <li>Run <code>npm run serve</code> and leave it running.</li>
-            </ol>
-            <p>
-              It prints the addresses it is reachable on. Open one of those on a tablet and
-              the app finds the converter by itself — there is nothing to type in here.
-            </p>
+        {/* ---- Advanced: converter setup ----------------------------------- */}
+        {/* Folded away on purpose. A technician never needs this: conversion is
+            automatic and picks the best route by itself. It is here for whoever
+            sets up the office converter, so a tablet can be pointed at it. */}
+        <section className="spanel quiet">
+          <details className="advanced">
+            <summary>
+              <span className="summary-title">Advanced — Word conversion setup</span>
+              <span className="summary-hint">
+                For whoever runs the office converter. Nothing here needs changing day to day.
+              </span>
+            </summary>
+            <div className="advanced-body">
+              <ConverterStatus status={status} checking={checking} onRetest={check} />
+
+              <fieldset className="settingfield">
+                <legend>Converter address</legend>
+                <p className="settinghelp">
+                  Leave blank to search automatically. Set it when the converter runs on a
+                  different machine — on a tablet, that is the office computer’s address.
+                </p>
+                <div className="worow">
+                  <input className="woinput" placeholder="http://192.168.1.20:8787"
+                    value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') applyUrl() }}
+                    inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                  <button onClick={applyUrl} disabled={draftUrl.trim() === settings.url}>Save &amp; test</button>
+                </div>
+              </fieldset>
+
+              <details className="settinghelpbox">
+                <summary>How do I start the converter?</summary>
+                <p>On the computer that will do the converting, once:</p>
+                <ol>
+                  <li>Install LibreOffice (free) and, on Linux, <code>python3-uno</code>.</li>
+                  <li>In the app folder run <code>npm run setup-fonts</code> to install the
+                    matching fonts.</li>
+                  <li>Run <code>npm run serve</code> and leave it running.</li>
+                </ol>
+                <p>
+                  It prints the addresses it is reachable on. Open one of those on a tablet and
+                  the app finds the converter by itself — there is nothing to type in here.
+                </p>
+              </details>
+            </div>
           </details>
-        </details>
-      </section>
+        </section>
+      </div>
     </div>
   )
 }
