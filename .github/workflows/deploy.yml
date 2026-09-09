@@ -45,5 +45,18 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # The Pages source for this repository must be "GitHub Actions"
+      # (Settings → Pages → Build and deployment → Source). With the source
+      # set to "Deploy from a branch", GitHub also runs its own "pages build
+      # and deployment" on every push, publishing the raw repository — the
+      # unbuilt index.html, which names /src/main.jsx — and whichever of the
+      # two deployments finishes last is what the site serves. For weeks that
+      # race was won by this workflow by a few seconds; twice in one day it
+      # was lost, and the live site was the source tree. This pause makes
+      # this workflow finish last even if the source is ever set back to a
+      # branch. It costs nothing when the source is GitHub Actions, where the
+      # branch deployment does not run at all.
+      - name: Let any branch deployment finish first
+        run: sleep 120
       - id: deployment
         uses: actions/deploy-pages@v4
