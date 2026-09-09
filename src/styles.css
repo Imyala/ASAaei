@@ -207,18 +207,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   box-shadow: 0 10px 20px -12px rgba(47,74,149,.75), inset 0 1px 0 rgba(255,255,255,.18);
 }
 .toolbar button.primary.cta:hover { color: #fff; box-shadow: 0 14px 24px -12px rgba(47,74,149,.8), inset 0 1px 0 rgba(255,255,255,.18); }
-/* the mode switch and the design tools are segmented pills */
-.modes, .tools {
-  gap: 0; padding: 3px; border-radius: 999px;
-  background: rgba(38,56,102,.07); box-shadow: inset 0 0 0 1px rgba(38,56,102,.05);
-}
-.modes button, .tools button { border-color: transparent; background: transparent; box-shadow: none; padding: 7px 13px; }
-.modes button:hover, .tools button:hover { background: rgba(255,255,255,.7); box-shadow: none; }
-.modes button.on, .tools button.on { background: #fff; color: var(--blue); box-shadow: 0 1px 3px rgba(38,56,102,.16); border-color: transparent; }
-.locked-badge {
-  display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px;
-  background: #e8f7ee; color: #1f7a44; font-size: 13px; font-weight: 600;
-}
 
 /* status strips under the toolbar: the same tone as the home screen's notices */
 .busy { background: #fff7e2; color: #7a5a12; padding: 8px 16px; font-size: 14px; box-shadow: inset 0 -1px 0 rgba(160,120,20,.16); }
@@ -319,37 +307,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .sigdone b { color: var(--blue); font-size: 13px; line-height: 1.1; white-space: nowrap; }
 .sigdone small { color: #667; font-size: 10px; }
 
-/* ---------- field panel (design mode) ---------- */
-.panel {
-  width: 272px; margin: 16px 16px 16px 0; padding: 20px; align-self: flex-start; max-height: calc(100% - 32px);
-  background: #fff; border-radius: 18px; border: 1px solid rgba(38,56,102,.09);
-  box-shadow: 0 1px 2px rgba(38,56,102,.05), 0 22px 44px -28px rgba(38,56,102,.55);
-  overflow: auto; display: flex; flex-direction: column; gap: 12px;
-}
-.panel h3 { margin: 0 0 2px; color: #1f2a47; font-size: 18px; font-weight: 700; }
-.panel label {
-  display: flex; flex-direction: column; gap: 6px;
-  font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b7794;
-}
-.panel input, .panel textarea {
-  font: inherit; font-size: 15px; color: #1f2a47; padding: 10px 12px; border-radius: 10px;
-  border: 1px solid rgba(38,56,102,.14); background: #fbfcfe;
-}
-.panel input:focus, .panel textarea:focus { outline: none; border-color: var(--blue-2); background: #fff; box-shadow: 0 0 0 3px rgba(59,87,166,.15); }
-.sizerow { display: flex; gap: 10px; }
-.sizerow label { flex: 1; }
-.panel button.danger { border-radius: 10px; padding: 10px 14px; }
-.danger { background: #fff; color: #a3323f; border-color: #eccdd1; }
-.danger:hover { background: #fdf1f2; }
-.tip { font-size: 12.5px; color: #8691a8; margin: 0; line-height: 1.5; }
-
 @media (max-width: 720px) {
-  .panel {
-    position: fixed; right: 0; top: 0; bottom: 0; z-index: 30; margin: 0; max-height: none;
-    border-radius: 18px 0 0 18px; box-shadow: -8px 0 30px rgba(20,30,60,.18);
-  }
   .toolbar { gap: 6px 10px; padding: 8px 10px; }
-  .tools { width: 100%; overflow-x: auto; }
   .pagescroll { padding: 14px 10px 30px; }
   .page { border-radius: 8px; }
 }

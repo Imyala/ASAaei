@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import JSZip from 'jszip'
 import {
-  encodeBmp32, transparentBmp, needsRewrite, fitSide, prepareDocxForEngine, MAX_SIDE,
+  encodeBmp32, transparentBmp, needsRewrite, fitSide, prepareDocxForEngine, MAX_SIDE, underlayWhite,
 } from './docxPreflight.js'
 
 const u32 = (b, o) => new DataView(b.buffer, b.byteOffset).getUint32(o, true)
@@ -37,6 +37,18 @@ test('encodeBmp32 writes a V4 bitmap with an alpha mask, rows bottom-up', () => 
   assert.deepEqual([...bmp.subarray(122, 130)], [0, 255, 0, 255, 255, 0, 0, 128])
   // Then the top row: red opaque, transparent black.
   assert.deepEqual([...bmp.subarray(130, 138)], [0, 0, 255, 255, 0, 0, 0, 0])
+})
+
+test('underlayWhite puts white under transparency and leaves opaque pixels alone', () => {
+  const px = new Uint8Array([
+    0, 0, 0, 0,        // fully transparent black → white, still transparent
+    20, 40, 60, 255,   // opaque → untouched
+    0, 0, 0, 128,      // half-transparent black → mid grey, alpha kept
+  ])
+  underlayWhite(px)
+  assert.deepEqual([...px.slice(0, 4)], [255, 255, 255, 0])
+  assert.deepEqual([...px.slice(4, 8)], [20, 40, 60, 255])
+  assert.deepEqual([...px.slice(8, 12)], [127, 127, 127, 128])
 })
 
 test('encodeBmp32 refuses a buffer that does not match its size', () => {

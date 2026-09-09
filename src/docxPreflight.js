@@ -123,6 +123,26 @@ export function encodeBmp32(rgba, width, height) {
   return out
 }
 
+// Lay white under every pixel, in proportion to its transparency, keeping
+// the alpha channel as it is. A browser hands back transparent pixels as
+// (0, 0, 0, 0): black with alpha zero. Wherever the alpha mask is honoured
+// that colour never shows, but wherever it is not — the engine flattening a
+// header picture, a PDF viewer that ignores the soft mask — a logo with a
+// transparent background arrives sitting in a solid black box. With white
+// underneath, the same lapse shows a white box on a white page: nothing. A
+// pixel that is opaque is left exactly as it was.
+export function underlayWhite(rgba) {
+  for (let i = 0; i < rgba.length; i += 4) {
+    const a = rgba[i + 3]
+    if (a === 255) continue
+    const w = 255 - a
+    rgba[i] = Math.round((rgba[i] * a + 255 * w) / 255)
+    rgba[i + 1] = Math.round((rgba[i + 1] * a + 255 * w) / 255)
+    rgba[i + 2] = Math.round((rgba[i + 2] * a + 255 * w) / 255)
+  }
+  return rgba
+}
+
 // The stand-in for a picture that cannot be re-encoded: one fully
 // transparent pixel. The drawing's extent still reserves the space.
 export const transparentBmp = () => encodeBmp32(new Uint8Array([0, 0, 0, 0]), 1, 1)
@@ -228,7 +248,7 @@ export async function prepareDocxForEngine(bytes, { onProgress, signal, decode =
     if (!/\.(emf|wmf|emz|wmz)$/i.test(path)) {
       try {
         const { rgba, width, height } = await decode(data, path)
-        replacement = encodeBmp32(rgba, width, height)
+        replacement = encodeBmp32(underlayWhite(rgba), width, height)
         rewritten++
       } catch {
         replacement = null

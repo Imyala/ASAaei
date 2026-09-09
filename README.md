@@ -316,8 +316,8 @@ npm test                 # unit tests
 
 ## Fill out a document
 
-- Open a **PDF or Word (.docx, .doc)** file, or start from a blank fillable page.
-  Legacy `.doc` needs the converter; `.docx` works either way.
+- Open a **PDF or Word (.docx, .doc)** file. Legacy `.doc` needs the converter; `.docx` works
+  either way.
 - **Auto-detect fields (Word *and* PDF):** the app pre-places the fields and drops you into fill
   mode. It reads the document's **actual ruled boxes** and puts a field inside each empty one,
   classifying each (OK/Fail/N/A tap-cell for status columns, text for wider cells, signature next
@@ -326,17 +326,17 @@ npm test                 # unit tests
 - **Tap OK / Fail / N/A:** status cells are a single tap-cycle — blank → **OK** → **N/A** →
   **Fail** → blank — so a whole column is a few taps, no dropdowns. A column headed *Pass/Fail*
   taps through **Pass / N/A / Fail** instead, matching the form's own wording.
-- **Design form:** place text fields, dropdowns, OK/Fail/N/A groups and signature blocks; drag to
-  position; set labels and dropdown options.
 - **Profile autofill:** set your name + SAP ID once in Settings; every form opens with your name,
   SAP ID and today's date already filled in.
 - **Page picker:** keep only the pages you fill, and drag to reorder.
-- **Save as a fill layout:** store a form's field layout for a form the detector can't read. There
-  is nothing to pick from — the app re-applies a saved layout on its own when it recognises the
-  form's document number.
-- **Finalize & lock:** flattens the fields so the document can no longer be edited — only further
-  signatures may be added.
-- **Save PDF:** exports a flattened PDF, keeping the text selectable when the converter produced it.
+- **Reload file:** puts the open document back exactly as it opened — every box cleared apart
+  from your own details — after asking first. It works from the PDF already in hand, so a Word
+  document is not converted again.
+- **Download PDF:** exports a flattened PDF, keeping the text selectable when the converter
+  produced it.
+- A saved fill layout is re-applied on its own when the app recognises a form's document number.
+  The screen for designing layouts, and the finalize-and-lock step, were removed from the app:
+  a technician never needs them, and every download is flattened anyway.
 
 ## Settings
 

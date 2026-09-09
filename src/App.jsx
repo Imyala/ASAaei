@@ -88,7 +88,7 @@ export default function App() {
   const [pdfBytes, setPdfBytes] = useState(null)
   const [fileName, setFileName] = useState('document')
   const [fields, setFields] = useState([])
-  const [mode, setMode] = useState('design')
+  const [mode, setMode] = useState('fill')
   const [tool, setTool] = useState('select')
   const [selectedId, setSelectedId] = useState(null)
   const [locked, setLocked] = useState(false)
@@ -111,6 +111,9 @@ export default function App() {
 
   const fileRef = useRef(null)
   const pendingRef = useRef(null) // { action }
+  // The document as it was opened — its PDF bytes and what was detected in
+  // it — so "Reload file" can put it back exactly, without converting again.
+  const openedRef = useRef(null) // { bytes, name, meta }
   const dragRef = useRef(null)
   // The in-flight page render, so opening another document can stop it and
   // reclaim its images rather than leaving them drawing into nothing.
@@ -184,6 +187,7 @@ export default function App() {
   // can't read — it never overrides good detection (which would go stale when
   // the document changes). Used by the "Fill out a document" flow.
   const openDocument = useCallback(async (bytes, name, meta = {}) => {
+    openedRef.current = { bytes, name, meta }
     const {
       autoFields = [], docKey: dk = '', docTitle: dt = '',
       fidelity = '', missingFonts = [], graphicNotes = [],
@@ -204,10 +208,26 @@ export default function App() {
     fields = applyProfile(fields, getProfile())
     setAppliedTemplate(applied)
     await showBytesInEditor(bytes, name, {
-      fields, mode: fields.length ? 'fill' : 'design', resetLock: true, pages,
+      fields, mode: 'fill', resetLock: true, pages,
       fidelity, missingFonts, graphicNotes,
     })
   }, [showBytesInEditor])
+
+  // "Reload file": the document as it was when it opened — every box empty
+  // again except the tech's own details, every signature gone. It works from
+  // the PDF already in hand, so a Word document is not converted a second
+  // time. It asks first: on a tablet this is one tap from a page of work.
+  const reloadDocument = async () => {
+    const opened = openedRef.current
+    if (!opened) return
+    if (!window.confirm('Reload this document? Everything you have typed, ticked and signed on it will be cleared.')) return
+    setBusy('Reloading the document…')
+    try {
+      await openDocument(opened.bytes, opened.name, opened.meta)
+    } finally {
+      setBusy('')
+    }
+  }
 
   // ---- file chosen (new design / reload) ----------------------------------
   const onFileChosen = async (e) => {
@@ -238,7 +258,6 @@ export default function App() {
   }
 
   const beginOpen = async (file) => {
-    const p = pendingRef.current || { action: 'new' }
     const isWord = /\.docx?$/i.test(file.name)
 
     // Leave the home screen NOW. Converting a long Word document takes a few
@@ -310,14 +329,9 @@ export default function App() {
       if (job.signal.aborted) return
       setOpening((o) => o && { ...o, stage: 'Laying out the pages…', progress: 0 })
       const provenance = { fidelity: fid, missingFonts: fonts, graphicNotes: gnotes }
-      if (p.action === 'new') {
-        // Recognise the form and auto-apply a saved layout if we have one;
-        // otherwise fall back to auto-detected fields (or a clean canvas).
-        await openDocument(bytes, file.name, { autoFields, docKey: dk, docTitle: dt, ...provenance })
-      } else if (p.action === 'reload') {
-        // keep existing fields/values
-        await showBytesInEditor(bytes, file.name, { ...provenance })
-      }
+      // Recognise the form and auto-apply a saved layout if we have one;
+      // otherwise fall back to auto-detected fields.
+      await openDocument(bytes, file.name, { autoFields, docKey: dk, docTitle: dt, ...provenance })
     } catch (err) {
       if (job.signal.aborted || err?.name === 'AbortError') {
         // The user cancelled — that is not a failure, so no alarm about it.
@@ -342,19 +356,6 @@ export default function App() {
   const pickFile = (action) => {
     pendingRef.current = { action }
     fileRef.current?.click()
-  }
-
-  const saveAsTemplate = async () => {
-    if (!fields.length) { alert('Add some fields first.'); return }
-    const name = window.prompt('Name this form template (e.g. “Pump Inspection Sheet”):', docTitle || fileName)
-    if (!name) return
-    await saveTemplate(name.trim(), fields, {
-      docKey, docTitle, pages: [...selectedPages].sort((a, b) => a - b),
-    })
-    setAppliedTemplate(name.trim())
-    alert(docKey
-      ? `Saved “${name}”. Next time you open ${docKey} it will open ready to fill.`
-      : `Saved “${name}”. It will be re-applied to a form this one can be recognised by.`)
   }
 
   // ---- placing / editing fields (design mode) -----------------------------
@@ -415,11 +416,6 @@ export default function App() {
     const name = window.prompt('Type the signer’s full name:')
     if (!name) return
     updateField(field.id, { value: { name: name.trim(), timestamp: nowStamp() } })
-  }
-  const finalize = () => {
-    if (window.confirm('Lock this document? Fields can no longer be edited (signatures may still be added).')) {
-      setLocked(true); setMode('fill')
-    }
   }
   const download = async () => {
     if (!pdfBytes) return
@@ -844,41 +840,13 @@ export default function App() {
           {appliedTemplate && <span className="applied-chip" title="Saved layout applied automatically">✓ {appliedTemplate}</span>}
         </div>
 
-        <div className="group modes" role="group" aria-label="Mode">
-          <button className={mode === 'design' ? 'on' : ''} disabled={locked}
-            onClick={() => { setMode('design'); setTool('select') }}>Design form</button>
-          <button className={mode === 'fill' ? 'on' : ''}
-            onClick={() => { setMode('fill'); setTool('select') }}>Fill &amp; sign</button>
-        </div>
-
-        {mode === 'design' && !locked && (
-          <div className="group tools" role="group" aria-label="Tools">
-            {Object.keys(TOOL_LABEL).map((t) => (
-              <button key={t} className={tool === t ? 'on' : ''} onClick={() => setTool(t)}>
-                {t === 'select' ? '↖' : '＋'} {TOOL_LABEL[t]}
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className="group right">
           {pages.length > 1 && (
             <button className={showPages ? 'on' : ''} onClick={() => setShowPages((v) => !v)}>
               Pages <span className="count">{selectedPages.size}/{pages.length}</span>
             </button>
           )}
-          {mode === 'design' && !locked && <button onClick={saveAsTemplate}>Save as template</button>}
-          <button onClick={() => pickFile('reload')}>Reload file</button>
-          {locked && (
-            <span className="locked-badge">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                <rect x="3" y="7" width="10" height="7" rx="1.5" />
-                <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
-              </svg>
-              Locked
-            </span>
-          )}
-          {!locked && <button onClick={finalize}>Finalize &amp; lock</button>}
+          <button onClick={reloadDocument} title="Clear everything entered and start this document again">Reload file</button>
           <button className="primary cta" onClick={download}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 4v11M7 10l5 5 5-5" />
@@ -920,8 +888,11 @@ export default function App() {
           <button className="inlinelink" onClick={() => setScreen('settings')}>Set up the converter service</button>
         </div>
       )}
-      {mode === 'design' && tool !== 'select' && (
-        <div className="hintbar">Tap on the page to place a <b>{TOOL_LABEL[tool]}</b>.</div>
+      {pages.length > 0 && fields.length === 0 && !busy && (
+        <div className="hintbar">
+          No fillable boxes were found on this document. It can still be read here; to fill it in,
+          open the form's PDF or Word version.
+        </div>
       )}
 
       {showPages && (
@@ -983,35 +954,6 @@ export default function App() {
           ) : null })}
         </div>
 
-        {mode === 'design' && selected && !locked && (
-          <aside className="panel">
-            <h3>{TOOL_LABEL[selected.type]}</h3>
-            <label>Label
-              <input value={selected.label}
-                onChange={(e) => updateField(selected.id, { label: e.target.value })} />
-            </label>
-            {selected.type === 'dropdown' && (
-              <label>Options (one per line)
-                <textarea rows={5} value={selected.options.join('\n')}
-                  onChange={(e) => updateField(selected.id, {
-                    options: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
-                  })} />
-              </label>
-            )}
-            <div className="sizerow">
-              <label>Width %
-                <input type="number" min={5} max={100} value={Math.round(selected.wPct * 100)}
-                  onChange={(e) => updateField(selected.id, { wPct: clamp(e.target.value / 100, 0.05, 1) })} />
-              </label>
-              <label>Height %
-                <input type="number" min={2} max={40} value={Math.round(selected.hPct * 100)}
-                  onChange={(e) => updateField(selected.id, { hPct: clamp(e.target.value / 100, 0.02, 0.4) })} />
-              </label>
-            </div>
-            <button className="danger" onClick={() => deleteField(selected.id)}>Delete field</button>
-            <p className="tip">Drag the field on the page to move it.</p>
-          </aside>
-        )}
       </div>
     </div>
   )
