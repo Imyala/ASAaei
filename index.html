@@ -141,7 +141,76 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- What the page shows until the app's script has arrived and mounted:
+           a card, never a blank screen. React replaces all of this on mount.
+           If the app has not started after a while, the card says what it
+           can see — which page was served, whether the service worker is in
+           charge, whether the page is isolated — and offers a fresh load. -->
+      <div id="boot" style="min-height:100%;display:flex;align-items:flex-start;justify-content:center;padding:clamp(28px,8vh,92px) 20px 40px;background:linear-gradient(180deg,#f4f7fc 0%,#eaeff8 100%);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#26314c">
+        <div style="width:100%;max-width:520px;background:#fff;border-radius:22px;padding:28px 30px;border:1px solid rgba(38,56,102,.09);box-shadow:0 1px 2px rgba(38,56,102,.05),0 26px 50px -30px rgba(38,56,102,.55)">
+          <div style="font-size:22px;font-weight:700;color:#1f2a47">ASAaei</div>
+          <p id="boot-msg" style="margin:10px 0 0;font-size:15px;line-height:1.6;color:#5f6b86">Loading…</p>
+          <p id="boot-diag" style="margin:12px 0 0;font-size:12.5px;line-height:1.6;color:#8691a8;display:none"></p>
+          <button id="boot-reload" type="button" style="display:none;margin-top:16px;font:inherit;font-size:15px;font-weight:650;color:#fff;background:#2f4a95;border:none;border-radius:12px;padding:12px 22px;cursor:pointer">Load again</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      // The loading card's clock. Nothing here touches the app once it has
+      // mounted (the card is gone by then and every lookup finds nothing).
+      (function () {
+        var PAGE_BUILD = '%BUILD_ID%'
+        var started = Date.now()
+        var scriptFailed = false
+        window.addEventListener('error', function (e) {
+          var t = e && e.target
+          if (t && t.tagName === 'SCRIPT') scriptFailed = true
+        }, true)
+        function diag() {
+          var sw = 'serviceWorker' in navigator
+            ? (navigator.serviceWorker.controller ? 'service worker in charge' : 'no service worker in charge')
+            : 'service workers unsupported'
+          return 'Page build ' + PAGE_BUILD + ' · ' + sw + ' · '
+            + (window.crossOriginIsolated ? 'isolated' : 'not isolated') + ' · '
+            + (navigator.onLine ? 'online' : 'offline') + ' · '
+            + Math.round((Date.now() - started) / 1000) + ' s'
+        }
+        function say(msg, showReload) {
+          var m = document.getElementById('boot-msg')
+          if (!m) return false // the app has mounted; the card is gone
+          m.textContent = msg
+          var d = document.getElementById('boot-diag')
+          d.style.display = 'block'; d.textContent = diag()
+          var b = document.getElementById('boot-reload')
+          if (showReload) {
+            b.style.display = 'inline-block'
+            b.onclick = function () {
+              try { sessionStorage.clear() } catch (e) {}
+              var u = new URL(location.href); u.searchParams.set('heal', String(Date.now()))
+              location.replace(u.href)
+            }
+          }
+          return true
+        }
+        setTimeout(function () {
+          say(scriptFailed
+            ? 'The app’s files could not be loaded. The page may be a stale copy — load it again.'
+            : 'Still loading. On a slow connection the app takes a little while the first time; after that it is kept on this device.', scriptFailed)
+        }, 6000)
+        setTimeout(function () {
+          say(scriptFailed
+            ? 'The app’s files could not be loaded. The page may be a stale copy — load it again.'
+            : 'The app has not started. Load the page again; if this keeps happening, send a photo of this card.', true)
+        }, 20000)
+        // Keep the diagnostic line current while the card is showing.
+        var tick = setInterval(function () {
+          var d = document.getElementById('boot-diag')
+          if (!d) { clearInterval(tick); return }
+          if (d.style.display === 'block') d.textContent = diag()
+        }, 1000)
+      })()
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

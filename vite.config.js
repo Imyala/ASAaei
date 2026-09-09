@@ -16,6 +16,11 @@ const versionFile = () => ({
   generateBundle() {
     this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ build: BUILD_ID }) })
   },
+  // The stamp also goes into index.html itself, so the loading card can say
+  // which page was served even when the app's script never arrives.
+  transformIndexHtml(html) {
+    return html.replace(/%BUILD_ID%/g, BUILD_ID)
+  },
 })
 
 // PWA + offline: the app installs to the home screen (iPad/tablet/desktop) and
