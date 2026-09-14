@@ -8,6 +8,7 @@ import {
   convertViaService, discoverConverter, ConverterUnavailableError, converterRequired,
   approximationAllowed,
 } from './converter.js'
+import { unifyPageFooters } from './docxPreflight.js'
 import { convertViaWasm, wasmAvailable, WasmEngineError } from './wasmConverter.js'
 
 // Refusing to approximate a Word document is a decision, not a failure, so it
@@ -160,6 +161,15 @@ export async function docxToHtml(arrayBuffer) {
 // the converter. The result is treated exactly like an uploaded PDF from then
 // on, with detected fields riding along as `autoFields`.
 export async function docxToPdf(arrayBuffer, { onProgress, filename = 'document.docx', signal } = {}) {
+  // One footer for every page (see unifyPageFooters) — done here, ahead of the
+  // route choice, so the service and the in-page engine convert the same
+  // document. A file that is not a .docx package passes through as it is.
+  try {
+    const unified = await unifyPageFooters(new Uint8Array(arrayBuffer))
+    if (unified.changed) arrayBuffer = unified.bytes
+  } catch (err) {
+    console.warn('Could not unify the page footers; converting the document as-is:', err)
+  }
   try {
     // Confirm a converter is actually there BEFORE announcing that LibreOffice
     // is doing the work. Announcing first meant a machine with no converter

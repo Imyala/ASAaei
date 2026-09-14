@@ -1,5 +1,5 @@
 // Node test for the pure grid logic (no pdfjs). Run: node src/pdfGrid.test.mjs
-import { buildCells, cellsToFields, cellHasText, dedupeCells } from './pdfGrid.js'
+import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent } from './pdfGrid.js'
 
 let pass = 0, fail = 0
 const ok = (cond, msg) => { if (cond) { pass++ } else { fail++; console.error('  ✗ ' + msg) } }
@@ -354,6 +354,184 @@ console.log('cellsToFields — things that are not boxes to write in')
   ok(cellsToFields(filler, [], PW, PH, 0).length === 0, 'three cells alone are not a grid')
   ok(cellsToFields([...filler, { x: 60, y: 590, w: 200, h: 20 }], [], PW, PH, 0).length === 4,
     'four ordinary answer cells all keep their boxes')
+}
+
+
+console.log('a task that wraps onto a line reading "condition" is not a header row')
+{
+  // The generator procedure's B.2.9: "Check fuel pump rack operation and
+  // condition" wraps so its second line is the single word "condition" — a
+  // status *heading* word — and B.2.12 carries a "Note:" in its task text.
+  // Matching those words anywhere on the row skipped both rows entirely.
+  const xs = [50, 105, 285, 325, 365, 430], ws = [55, 180, 40, 40, 65, 115]
+  const rows = [72, 94, 114, 142, 245] // header, B.2.9, B.2.10, B.2.12 (tall), end
+  const cells = []
+  for (let r = 0; r < rows.length - 1; r++) {
+    for (let c = 0; c < xs.length; c++) cells.push({ x: xs[c], y: rows[r], w: ws[c], h: rows[r + 1] - rows[r] })
+  }
+  const texts = [
+    T('Clause No', 55, 100, 82), T('Task', 110, 133, 82), T('LUL', 290, 309, 82), T('LPL', 330, 349, 82),
+    T('Result', 370, 403, 82), T('Remarks/Action', 435, 515, 82),
+    T('B.2.9', 55, 76, 102), T('Check fuel pump rack operation and', 110, 256, 102), T('condition', 110, 147, 112),
+    T('N/A', 290, 305, 102), T('N/A', 330, 345, 102),
+    T('B.2.10', 55, 81, 121), T('Check condition of all engine couplings,', 110, 270, 121), T('where applicable', 110, 178, 131),
+    T('N/A', 290, 305, 121), T('N/A', 330, 345, 121),
+    T('B.2.12', 55, 81, 150), T('Where applicable check condition and', 110, 263, 150),
+    T('operation of cooling tower components.', 110, 270, 160), T('Note:', 110, 135, 170),
+    T('1. Cooling towers require to be inspected', 110, 275, 180), T('2. This only applies to gensets cooled by', 110, 273, 190),
+    T('N/A', 290, 305, 150), T('N/A', 330, 345, 150),
+  ]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  const rowOf = (y) => fields.filter((f) => Math.abs(f.yPct * PH - (y + 1.5)) < 1)
+  ok(rowOf(72).length === 0, 'the real header row gets nothing')
+  ok(rowOf(94).length === 2, `B.2.9 gets its Result and Remarks boxes (got ${rowOf(94).length})`)
+  ok(rowOf(114).length === 2, `B.2.10 gets its boxes (got ${rowOf(114).length})`)
+  ok(rowOf(142).length === 2, `B.2.12, with its "Note:", gets its boxes (got ${rowOf(142).length})`)
+  ok(rowOf(94).some((f) => f.type === 'status') && rowOf(94).some((f) => f.type === 'text'), 'Result is a tap-cell, Remarks a text box')
+  const remarks = rowOf(114).find((f) => f.type === 'text')
+  ok(remarks && /^B\.2\.10 Check condition of all engine/.test(remarks.label),
+    `the placeholder starts at the start of the row's label (got ${remarks && remarks.label})`)
+  ok(remarks && !/N\/A/.test(remarks.label), 'the LUL/LPL values are not part of the label')
+}
+
+console.log('a shading band drawn across a row does not swallow its cells')
+{
+  // Word paints the grey of a shaded row as ONE rectangle across the whole
+  // row. It used to count as the cell, its real cells were dropped inside it,
+  // and — holding the row label — it got no field: every second row of the
+  // performance test run table was missing.
+  const cells = []
+  const band = { x: 50, y: 100, w: 400, h: 15 } // the shading across row 1
+  for (let r = 0; r < 4; r++) {
+    cells.push({ x: 50, y: 100 + r * 15, w: 100, h: 15 })
+    for (let c = 0; c < 6; c++) cells.push({ x: 150 + c * 50, y: 100 + r * 15, w: 50, h: 15 })
+  }
+  const kept = dedupeCells([band, ...cells])
+  ok(!kept.some((c) => c.w === 400), 'the band itself is dropped')
+  ok(kept.length === 28, `all 28 cells survive (got ${kept.length})`)
+  // and a column band likewise
+  const col = { x: 150, y: 100, w: 50, h: 60 }
+  const kept2 = dedupeCells([col, ...cells])
+  ok(!kept2.some((c) => c.h === 60) && kept2.length === 28, `a shaded column keeps its cells (got ${kept2.length})`)
+  // ...while a cell with two small placeholders inside it is still one cell
+  const cell = { x: 300, y: 100, w: 18, h: 28 }
+  const ph1 = { x: 302, y: 101, w: 13, h: 14 }, ph2 = { x: 302, y: 118, w: 13, h: 8 }
+  const sibs = [{ x: 300, y: 130, w: 18, h: 28 }, { x: 300, y: 160, w: 18, h: 28 }]
+  const kept3 = dedupeCells([cell, ph1, ph2, ...sibs])
+  ok(kept3.length === 3 && kept3.some((c) => c.h === 28 && c.y === 100), 'nested placeholders still collapse to the outer cell')
+}
+
+console.log('rows that ask for a reading are typed, not tapped')
+{
+  // Table D.4: twelve narrow columns against "Voltage (R): Volts", "RPM",
+  // "Oil Press. Main: kPa" — figures, so the boxes must take typing.
+  const labels = ['Time', 'Load (kW):', 'Voltage (R): Volts', 'RPM', 'Oil Press. Main: kPa', 'Cyl 1 Exhaust Temp: °C']
+  const cells = [], texts = []
+  labels.forEach((l, r) => {
+    cells.push({ x: 50, y: 100 + r * 15, w: 110, h: 15 })
+    texts.push(T(l, 54, 150, 111 + r * 15, 8))
+    for (let c = 0; c < 12; c++) cells.push({ x: 160 + c * 28, y: 100 + r * 15, w: 28, h: 15 })
+  })
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.length === 72, `every reading cell gets a box (got ${fields.length})`)
+  ok(fields.every((f) => f.type === 'text'), 'and every one is a text box')
+  ok(fields.some((f) => f.label === 'Voltage (R): Volts'), 'labelled with the row it belongs to')
+
+  // A "Grading (1-5)" / "Actual Reading" / "Pass/Fail" trio of narrow columns.
+  const heads = ['Condition', 'Excellent', 'Grading (1-5)', 'Actual Reading', 'Pass/Fail']
+  const xs = [50, 110, 400, 450, 500], ws = [60, 290, 50, 50, 50]
+  const cells2 = [], texts2 = []
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 5; c++) cells2.push({ x: xs[c], y: 100 + r * 40, w: ws[c], h: 40 })
+  heads.forEach((h, c) => texts2.push(T(h, xs[c] + 4, xs[c] + 40, 112, 8)))
+  texts2.push(T('Genset Visual', 54, 100, 152, 8), T('Condition', 54, 96, 162, 8), T('as new', 114, 160, 152, 8))
+  texts2.push(T('Thermographic', 54, 105, 192, 8), T('no hot spots', 114, 170, 192, 8))
+  const fields2 = cellsToFields(cells2, texts2, PW, PH, 0)
+  ok(fields2.length === 6, `the three answer columns fill on both rows (got ${fields2.length})`)
+  const grading = fields2.filter((f) => f.label === 'Grading (1-5)')
+  ok(grading.length === 2 && grading.every((f) => f.type === 'text'), 'Grading is typed and carries its heading')
+  ok(fields2.filter((f) => f.label === 'Actual Reading' && f.type === 'text').length === 2, 'so is Actual Reading')
+  const pf = fields2.filter((f) => f.type === 'status')
+  ok(pf.length === 2 && pf.every((f) => f.options[0] === 'Pass'), 'Pass/Fail stays a tap-cell with Pass/Fail wording')
+  ok(fields2.every((f) => f.yPct * PH > 105), 'the "Condition" row-label heading does not make the data rows header rows')
+}
+
+console.log('a prompt printed in a cell gets a box beside it')
+{
+  // "Record water added" printed in the Remarks cell, "Start batteries:" /
+  // "Control batteries:" in the Result cell: the printed words made the cell
+  // read as full, so there was nowhere to type.
+  const xs = [50, 105, 285, 325, 365, 430], ws = [55, 180, 40, 40, 65, 115]
+  const cells = []
+  for (const [y, h] of [[100, 20], [120, 60], [180, 20], [200, 20]]) {
+    for (let c = 0; c < xs.length; c++) cells.push({ x: xs[c], y, w: ws[c], h })
+  }
+  const texts = [
+    T('B.1.16', 55, 80, 112, 8), T('Check the alternator', 110, 200, 112, 8),
+    T('B.1.17', 55, 80, 132, 8), T('Check electrolyte level', 110, 220, 132, 8),
+    T('Start batteries:', 370, 425, 132, 8), T('Control batteries:', 370, 428, 160, 8),
+    T('Record water added', 435, 500, 132, 8), T('Record water added', 435, 500, 160, 8),
+    T('B.1.18', 55, 80, 192, 8), T('Check belts', 110, 160, 192, 8),
+    T('B.1.19', 55, 80, 212, 8), T('Run engine', 110, 160, 212, 8),
+  ]
+  const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
+  const prompts = fields.filter((f) => /Record water added|batteries/.test(f.label))
+  ok(prompts.filter((f) => f.label === 'Record water added').length === 2, `both "Record water added" prompts get a box (got ${prompts.filter((f) => f.label === 'Record water added').length})`)
+  ok(prompts.some((f) => f.label === 'Start batteries'), 'so does "Start batteries:"')
+  ok(prompts.every((f) => f.type === 'text' && f.wPct * PW >= 40 && f.hPct * PH >= 8), 'each is a usable text box')
+  ok(!fields.some((f) => /Check the alternator|Run engine/.test(f.label) && f.xPct * PW < 300),
+    'a task description is not a prompt')
+}
+
+console.log('write-on lines get boxes')
+{
+  // Typed blanks: underscores/dots run into the label's own token or stand
+  // alone after it ("Fuel start: ____Litres", "Genset:......").
+  const texts = [
+    T('Fuel start:', 50, 95, 356, 9), T('____Litres', 101, 144, 356, 9),
+    T('Fuel finish:', 167, 215, 356, 9), T('____Litres', 221, 264, 356, 9),
+    T('Remarks/Derating:_______________________________________', 50, 310, 367, 9),
+    T('Genset:............................................................', 50, 256, 94, 9),
+    T('Signature: ____________________', 50, 200, 420, 9),
+    T('Fitted etc...', 50, 100, 500, 9), // an ellipsis in prose
+  ]
+  const fields = blankLineFields(texts, [], [], PW, PH, 0)
+  const by = (l) => fields.filter((f) => f.label === l)
+  ok(by('Fuel start').length === 1 && by('Fuel finish').length === 1, 'each fuel blank is labelled by the words before it')
+  const fs = by('Fuel start')[0]
+  ok(fs && fs.xPct * PW >= 100 && fs.xPct * PW <= 104, `the box starts where the underscores do (got ${fs && (fs.xPct * PW).toFixed(1)})`)
+  ok(fs && fs.wPct * PW < 30, 'and stops before "Litres"')
+  const rd = by('Remarks/Derating')[0]
+  ok(rd && rd.xPct * PW > 100 && rd.xPct * PW + rd.wPct * PW <= 311, `a blank inside a token is placed after its label (got x=${rd && (rd.xPct * PW).toFixed(1)})`)
+  ok(by('Genset').length === 1, 'a dotted leader is a blank too')
+  ok(by('Signature').length === 1 && by('Signature')[0].type === 'signature', 'a signature line is a signature field')
+  ok(!fields.some((f) => f.yPct * PH > 480), 'an ellipsis in prose is not a blank')
+
+  // Drawn rules: a "Notes/Remarks:" caption over rows of dashes / a dashed
+  // border, and a footer rule with no label near it.
+  const texts2 = [
+    T('Notes/Remarks:', 50, 140, 377, 10),
+    T('AEI 3.3301', 50, 99, 815, 9),
+    T('Primary and Standby Generators', 200, 400, 33, 9),
+  ]
+  const hlines = [
+    { y: 390, x1: 50, x2: 545 }, { y: 403, x1: 50, x2: 545 }, { y: 416, x1: 50, x2: 545 },
+    { y: 803, x1: 50, x2: 545 }, // footer rule
+    { y: 36, x1: 50, x2: 545 },  // header rule, text sits on it
+    { y: 500, x1: 50, x2: 250 }, { y: 520, x1: 50, x2: 250 }, // table edges
+  ]
+  const cells = [{ x: 50, y: 500, w: 200, h: 20 }]
+  const fields2 = blankLineFields(texts2, hlines, cells, PW, PH, 0)
+  ok(fields2.length === 3, `the three lines under "Notes/Remarks:" get boxes and nothing else does (got ${fields2.length}: ${fields2.map((f) => f.label + '@' + (f.yPct * PH).toFixed(0)).join(', ')})`)
+  ok(fields2.every((f) => f.label === 'Notes/Remarks'), 'all carry the caption')
+  ok(fields2.every((f) => f.hPct * PH >= 8 && f.hPct * PH <= 13), 'each box is a line of type tall')
+}
+
+console.log('runExtent — where a run sits along its token')
+{
+  const [x1, x2] = runExtent('Fuel:____', 5, 9, 0, 100)
+  ok(x1 > 40 && x2 === 100, `the underscores end where the token ends (got ${x1.toFixed(1)}..${x2.toFixed(1)})`)
+  const [a1, a2] = runExtent('____Litres', 0, 4, 100, 143)
+  ok(a1 === 100 && a2 < 125, `leading underscores start at the token's left edge (got ${a1}..${a2.toFixed(1)})`)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

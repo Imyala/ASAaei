@@ -320,9 +320,15 @@ npm test                 # unit tests
   either way.
 - **Auto-detect fields (Word *and* PDF):** the app pre-places the fields and drops you into fill
   mode. It reads the document's **actual ruled boxes** and puts a field inside each empty one,
-  classifying each (OK/Fail/N/A tap-cell for status columns, text for wider cells, signature next
-  to a "Signature" label). PDFs with embedded form fields use those directly. Detection re-runs on
-  every open, so re-issued versions still fill.
+  classifying each (OK/Fail/N/A tap-cell for status columns, text for wider cells and for any
+  box that asks for a figure — a "Voltage: Volts" row, a "Grading (1-5)" column — signature next
+  to a "Signature" label). Shaded rows keep their boxes. A prompt printed inside a cell ("Record
+  water added") gets a box beside it, and write-on lines ("Fuel start: ____Litres",
+  "Notes/Remarks:" over rows of dashes) get one too. PDFs with embedded form fields use those
+  directly. Detection re-runs on every open, so re-issued versions still fill. To see what the
+  detector finds in a PDF without opening the app: `npm run inspect-pdf form.pdf`.
+- **The page number stays put:** a Word document set up with mirrored odd/even footers (page
+  number left on one page, right on the next) is converted with the same footer on every page.
 - **Tap OK / Fail / N/A:** status cells are a single tap-cycle — blank → **OK** → **N/A** →
   **Fail** → blank — so a whole column is a few taps, no dropdowns. A column headed *Pass/Fail*
   taps through **Pass / N/A / Fail** instead, matching the form's own wording.

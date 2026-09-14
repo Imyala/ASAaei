@@ -11,6 +11,9 @@ const RX = {
   // maintenance frequency codes: 1M 3M 6M 12M 1Y, or single D/W/M/Q/Y
   freq: /^(?:\d{1,2}\s*[dwmqy]|[dwmqy])$/i,
   textish: /model|serial|barcode|calibrat|reading|value|measure|number|no\.?$|name|hours|pressure|temp|date|site|order|plan|cert|sheet/i,
+  // A label that asks for a figure: a unit, a quantity, a grading. Such a box
+  // is typed into, never tapped OK / N/A / Fail, however narrow it is.
+  reading: /reading|value|measure|grad(?:e|ing)|score|rating|level|qty|quantity|count|hours|time\b|load|pressure|temp|speed|flow|litres?|\bl\b|kpa|bar\b|psi|°|deg|volt|\bv\b|amp|\ba\b|\bhz\b|rpm|\bkva?\b|\bkw\b|\bmm\b|\bm\b|\bkg\b|%/i,
 }
 
 export const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
@@ -53,4 +56,14 @@ const RX_STATUS_HEADER =
 
 export function isStatusHeaderToken(text) {
   return RX_STATUS_HEADER.test(norm(text))
+}
+
+// True for a row or column label that asks for a figure to be written in —
+// "Voltage (R): Volts", "Oil Press. Main: kPa", "Actual Reading", "Grading
+// (1-5)" — as opposed to a task to be checked off. Kept to label-length text
+// so a sentence that merely mentions a temperature does not count.
+export function isReadingLabel(text) {
+  const t = norm(text)
+  if (!t || t.length > 48) return false
+  return RX.reading.test(t)
 }

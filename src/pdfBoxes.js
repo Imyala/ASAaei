@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
-import { buildCells, cellsToFields } from './pdfGrid.js'
+import { buildCells, detectPageFields } from './pdfGrid.js'
+import { collectGeometry, textTokens } from './pdfGeometry.js'
 
 // ---------------------------------------------------------------------------
 // Ruled-box detection
@@ -11,8 +12,10 @@ import { buildCells, cellsToFields } from './pdfGrid.js'
 // in the cells and no box is missed — including grids with no text to anchor to
 // (the "Unit Details" grid). Text positions are used only to (a) skip cells that
 // already contain text and (b) label the columns (status vs text).
-
-const { OPS, Util } = pdfjsLib
+//
+// The geometry readers live in pdfGeometry.js and the cell logic in pdfGrid.js,
+// both free of pdf.js imports, so `scripts/inspect-pdf.mjs` can run the same
+// detection over a real converted PDF in Node.
 
 export async function detectPdfBoxes(bytes) {
   const worker = new pdfjsLib.PDFWorker({ port: new PdfWorker() })
@@ -22,28 +25,7 @@ export async function detectPdfBoxes(bytes) {
     const pdf = await task.promise
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p)
-      // Work in VIEWPORT space (scale 1). convertToViewportPoint folds in the
-      // page's /Rotate, so geometry and text land in the same coordinate frame as
-      // the rendered image for portrait AND rotated-landscape pages alike — page
-      // fractions then overlay correctly whatever the rotation.
-      const vp = page.getViewport({ scale: 1 })
-      const { width: pw, height: ph } = vp
-      const toVP = (x, y) => vp.convertToViewportPoint(x, y)
-      const [opList, textContent] = await Promise.all([page.getOperatorList(), page.getTextContent()])
-      const { hlines, vlines, rects, images } = collectGeometry(opList, toVP)
-      const cells = buildCells(hlines, vlines, rects, pw, ph)
-      const texts = textContent.items
-        .filter((it) => it.str && it.str.trim())
-        .map((it) => {
-          const tr = it.transform
-          const adv = it.width || 0
-          const un = Math.hypot(tr[0], tr[1]) || 1
-          const [x0, y0] = toVP(tr[4], tr[5])                                       // baseline start
-          const [x1, y1] = toVP(tr[4] + adv * tr[0] / un, tr[5] + adv * tr[1] / un) // baseline end
-          const fs = Math.hypot(tr[2], tr[3]) || Math.hypot(tr[0], tr[1]) || it.height || 9
-          return { str: it.str.trim(), x: Math.min(x0, x1), xr: Math.max(x0, x1), yTop: Math.min(y0, y1), h: fs }
-        })
-      fields.push(...cellsToFields(cells, texts, pw, ph, p - 1, images))
+      fields.push(...await detectPageBoxes(page, p - 1, pdfjsLib))
       // NOTE: no document-wide field cap here, deliberately. There used to be
       // one ("break once we pass 800"), and on a 37-page procedure it ran out
       // partway through page 25 — so the Appendix C inspection record on pages
@@ -59,71 +41,19 @@ export async function detectPdfBoxes(bytes) {
   }
 }
 
-// Walk the operator list, tracking the CTM, and collect axis-aligned lines and
-// rectangles in viewport (rotated, top-origin) point coordinates. `toVP` maps a
-// user-space point into that frame (page rotation included).
-function collectGeometry(opList, toVP) {
-  const { fnArray, argsArray } = opList
-  const hlines = [] // { y, x1, x2 }
-  const vlines = [] // { x, y1, y2 }
-  const rects = []  // { x, y, w, h } top-origin
-  // Where pictures are drawn. A framed logo is a rectangle with nothing but an
-  // image inside it, which is indistinguishable from an empty box by geometry
-  // alone — on the cover page of a real procedure that put a fillable field on
-  // top of the company logo.
-  const images = [] // { x, y, w, h } top-origin
-  let ctm = [1, 0, 0, 1, 0, 0]
-  const stack = []
-  const toTop = (pt) => toVP(pt[0], pt[1])
-
-  const addSeg = (ax, ay, bx, by) => {
-    if (Math.abs(ay - by) <= 1.2 && Math.abs(ax - bx) > 3) hlines.push({ y: (ay + by) / 2, x1: Math.min(ax, bx), x2: Math.max(ax, bx) })
-    else if (Math.abs(ax - bx) <= 1.2 && Math.abs(ay - by) > 3) vlines.push({ x: (ax + bx) / 2, y1: Math.min(ay, by), y2: Math.max(ay, by) })
-  }
-  const addRect = (x, y, w, h) => {
-    // corners in user space -> top-origin
-    const p1 = toTop(Util.applyTransform([x, y], ctm))
-    const p2 = toTop(Util.applyTransform([x + w, y + h], ctm))
-    const rx = Math.min(p1[0], p2[0]), ry = Math.min(p1[1], p2[1])
-    const rw = Math.abs(p2[0] - p1[0]), rh = Math.abs(p2[1] - p1[1])
-    rects.push({ x: rx, y: ry, w: rw, h: rh })
-    // its edges also feed the line grid
-    addSeg(rx, ry, rx + rw, ry); addSeg(rx, ry + rh, rx + rw, ry + rh)
-    addSeg(rx, ry, rx, ry + rh); addSeg(rx + rw, ry, rx + rw, ry + rh)
-  }
-
-  // An image is painted through the CTM as the unit square, so the current
-  // transform is its placed rectangle.
-  const addImage = () => {
-    const p1 = toTop(Util.applyTransform([0, 0], ctm))
-    const p2 = toTop(Util.applyTransform([1, 1], ctm))
-    const x = Math.min(p1[0], p2[0]), y = Math.min(p1[1], p2[1])
-    const w = Math.abs(p2[0] - p1[0]), h = Math.abs(p2[1] - p1[1])
-    if (w > 2 && h > 2) images.push({ x, y, w, h })
-  }
-
-  for (let i = 0; i < fnArray.length; i++) {
-    const fn = fnArray[i]
-    if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject
-        || fn === OPS.paintImageMaskXObject || fn === OPS.paintJpegXObject) addImage()
-    else if (fn === OPS.save) stack.push(ctm)
-    else if (fn === OPS.restore) ctm = stack.pop() || ctm
-    else if (fn === OPS.transform) ctm = Util.transform(ctm, argsArray[i])
-    else if (fn === OPS.constructPath) {
-      const ops = argsArray[i][0]
-      const co = argsArray[i][1]
-      let k = 0
-      let cur = null
-      let start = null // subpath start, for closePath
-      for (const op of ops) {
-        if (op === OPS.moveTo) { cur = toTop(Util.applyTransform([co[k], co[k + 1]], ctm)); start = cur; k += 2 }
-        else if (op === OPS.lineTo) { const nx = toTop(Util.applyTransform([co[k], co[k + 1]], ctm)); k += 2; if (cur) addSeg(cur[0], cur[1], nx[0], nx[1]); cur = nx }
-        else if (op === OPS.rectangle) { addRect(co[k], co[k + 1], co[k + 2], co[k + 3]); k += 4 }
-        else if (op === OPS.curveTo) { cur = toTop(Util.applyTransform([co[k + 4], co[k + 5]], ctm)); k += 6 }
-        else if (op === OPS.curveTo2 || op === OPS.curveTo3) { cur = toTop(Util.applyTransform([co[k + 2], co[k + 3]], ctm)); k += 4 }
-        else if (op === OPS.closePath) { if (cur && start) { addSeg(cur[0], cur[1], start[0], start[1]); cur = start } }
-      }
-    }
-  }
-  return { hlines, vlines, rects, images }
+// The fields on one pdf.js page. `lib` is the pdf.js module in use (the
+// worker-backed one in the app; the legacy build in the Node harness).
+export async function detectPageBoxes(page, pageIndex, lib) {
+  // Work in VIEWPORT space (scale 1). convertToViewportPoint folds in the
+  // page's /Rotate, so geometry and text land in the same coordinate frame as
+  // the rendered image for portrait AND rotated-landscape pages alike — page
+  // fractions then overlay correctly whatever the rotation.
+  const vp = page.getViewport({ scale: 1 })
+  const { width: pw, height: ph } = vp
+  const toVP = (x, y) => vp.convertToViewportPoint(x, y)
+  const [opList, textContent] = await Promise.all([page.getOperatorList(), page.getTextContent()])
+  const { hlines, vlines, rects, images } = collectGeometry(opList, toVP, lib)
+  const cells = buildCells(hlines, vlines, rects, pw, ph)
+  const texts = textTokens(textContent.items, toVP)
+  return detectPageFields({ cells, texts, hlines, pw, ph, pageIndex, images })
 }

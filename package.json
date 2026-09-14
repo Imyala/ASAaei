@@ -12,7 +12,8 @@
     "convert-server": "node server/convert-server.mjs",
     "setup-fonts": "bash server/setup-fonts.sh",
     "test": "node --test src/*.test.mjs server/*.test.mjs",
-    "check": "node server/convert-server.mjs --check"
+    "check": "node server/convert-server.mjs --check",
+    "inspect-pdf": "node scripts/inspect-pdf.mjs"
   },
   "dependencies": {
     "html2canvas": "^1.4.1",

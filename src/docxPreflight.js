@@ -279,3 +279,62 @@ export async function prepareDocxForEngine(bytes, { onProgress, signal, decode =
   })
   return { bytes: out, rewritten, blank: blankVector.length + blankBitmap.length, notes }
 }
+
+// ---- one footer for every page ---------------------------------------------
+
+// Give every page of a .docx the same header and footer.
+//
+// The procedures are set up in Word with "different odd and even pages", so
+// the footer mirrors across a spread: "AEI 3.3301 … 57 of 69" with the page
+// number at the right on odd pages, and "56 of 69 … AEI 3.3301" with it at
+// the left on even pages. On a screen there is no spread, and a technician
+// paging through a form sees the page number jump from side to side. So
+// before a document is converted — on either route — the even-page variant is
+// switched off: the `evenAndOddHeaders` setting is removed, and the even
+// header/footer references in every section with it, leaving the default
+// (odd-page) header and footer for every page. First-page headers/footers
+// (a cover page) are left as they are.
+//
+// Returns { bytes, changed }: the original bytes, untouched, when there was
+// nothing to do.
+export async function unifyPageFooters(bytes) {
+  let zip
+  try {
+    zip = await JSZip.loadAsync(bytes)
+  } catch {
+    return { bytes, changed: false } // not a .docx package
+  }
+  let changed = false
+  const settingsPath = 'word/settings.xml'
+  const settings = zip.file(settingsPath)
+  if (settings) {
+    const xml = await settings.async('string')
+    const out = stripEvenAndOddHeaders(xml)
+    if (out !== xml) { zip.file(settingsPath, out); changed = true }
+  }
+  const docPath = 'word/document.xml'
+  const doc = zip.file(docPath)
+  if (doc) {
+    const xml = await doc.async('string')
+    const out = stripEvenReferences(xml)
+    if (out !== xml) { zip.file(docPath, out); changed = true }
+  }
+  if (!changed) return { bytes, changed: false }
+  const out = await zip.generateAsync({
+    type: 'uint8array',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 1 },
+  })
+  return { bytes: out, changed: true }
+}
+
+// Drop the <w:evenAndOddHeaders/> setting (with or without a w:val).
+export function stripEvenAndOddHeaders(settingsXml) {
+  return settingsXml.replace(/<w:evenAndOddHeaders\b[^>]*\/>/g, '')
+    .replace(/<w:evenAndOddHeaders\b[^>]*>[\s\S]*?<\/w:evenAndOddHeaders>/g, '')
+}
+
+// Drop every even-page header/footer reference from the section properties.
+export function stripEvenReferences(documentXml) {
+  return documentXml.replace(/<w:(headerReference|footerReference)\b[^>]*\bw:type="even"[^>]*\/>/g, '')
+}

@@ -152,3 +152,52 @@ test('cancellation is honoured between pictures', async () => {
     prepareDocxForEngine(bytes, { signal: ctl.signal, decode: async () => ({ rgba: new Uint8Array(4), width: 1, height: 1 }) }),
     (e) => e.name === 'AbortError')
 })
+
+// ---- one footer for every page ---------------------------------------------
+
+const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+async function docxWith({ settings, document }) {
+  const zip = new JSZip()
+  zip.file('[Content_Types].xml', '<Types/>')
+  if (settings != null) zip.file('word/settings.xml', settings)
+  zip.file('word/document.xml', document)
+  return zip.generateAsync({ type: 'uint8array' })
+}
+
+test('unifyPageFooters drops the even-page setting and references, keeps the rest', async () => {
+  const { unifyPageFooters } = await import('./docxPreflight.js')
+  const bytes = await docxWith({
+    settings: `<w:settings ${W}><w:zoom w:percent="100"/><w:evenAndOddHeaders/><w:defaultTabStop w:val="720"/></w:settings>`,
+    document: `<w:document ${W}><w:body><w:p/><w:sectPr>`
+      + '<w:headerReference w:type="default" r:id="rIdH1"/><w:headerReference w:type="even" r:id="rIdH2"/>'
+      + '<w:footerReference w:type="even" r:id="rIdF2"/><w:footerReference w:type="default" r:id="rIdF1"/>'
+      + '<w:footerReference w:type="first" r:id="rIdF3"/><w:titlePg/>'
+      + '</w:sectPr></w:body></w:document>',
+  })
+  const out = await unifyPageFooters(bytes)
+  assert.equal(out.changed, true)
+  const zip = await JSZip.loadAsync(out.bytes)
+  const settings = await zip.file('word/settings.xml').async('string')
+  assert.ok(!/evenAndOddHeaders/.test(settings), 'setting removed')
+  assert.ok(/w:zoom/.test(settings) && /defaultTabStop/.test(settings), 'other settings kept')
+  const doc = await zip.file('word/document.xml').async('string')
+  assert.ok(!/w:type="even"/.test(doc), 'even references removed')
+  assert.ok(/headerReference w:type="default"/.test(doc) && /footerReference w:type="default"/.test(doc), 'default kept')
+  assert.ok(/footerReference w:type="first"/.test(doc) && /<w:titlePg\/>/.test(doc), 'first-page footer kept')
+})
+
+test('unifyPageFooters leaves a document without even pages untouched', async () => {
+  const { unifyPageFooters } = await import('./docxPreflight.js')
+  const bytes = await docxWith({
+    settings: `<w:settings ${W}><w:zoom w:percent="100"/></w:settings>`,
+    document: `<w:document ${W}><w:body><w:p/><w:sectPr><w:footerReference w:type="default" r:id="rIdF1"/></w:sectPr></w:body></w:document>`,
+  })
+  const out = await unifyPageFooters(bytes)
+  assert.equal(out.changed, false)
+  assert.equal(out.bytes, bytes)
+  // and something that is not a .docx at all
+  const junk = new Uint8Array([1, 2, 3])
+  const out2 = await unifyPageFooters(junk)
+  assert.equal(out2.changed, false)
+  assert.equal(out2.bytes, junk)
+})

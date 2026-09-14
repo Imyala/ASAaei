@@ -25,11 +25,18 @@ export async function detectPdfFields(bytes) {
   // 1. Existing form fields (most reliable when present).
   const viaForm = await detectAcroForm(bytes).catch(() => [])
   if (viaForm.length) return viaForm
-  // 2. Ruled boxes — a field inside each real cell (best alignment + coverage).
+  // 2. Ruled boxes — a field inside each real cell (best alignment + coverage),
+  //    plus the write-on lines and in-cell prompts read alongside them.
   const viaBoxes = await detectPdfBoxes(bytes).catch(() => [])
   if (viaBoxes.length >= 4) return viaBoxes
-  // 3. Fall back to reconstructing the table from positioned text.
-  return detectTextGrid(bytes).catch(() => [])
+  // 3. A page with only a line or two to write on is not a ruled form: keep
+  //    what was found and add the table reconstructed from positioned text,
+  //    leaving out anything that lands on a box already placed.
+  const viaText = await detectTextGrid(bytes).catch(() => [])
+  const clash = (a, b) => a.page === b.page
+    && Math.min(a.xPct + a.wPct, b.xPct + b.wPct) > Math.max(a.xPct, b.xPct)
+    && Math.min(a.yPct + a.hPct, b.yPct + b.hPct) > Math.max(a.yPct, b.yPct)
+  return [...viaBoxes, ...viaText.filter((t) => !viaBoxes.some((b) => clash(b, t)))]
 }
 
 // ---- strategy 1: existing AcroForm fields ---------------------------------

@@ -55,6 +55,33 @@ user into fill mode. Fields are read from the PDF's **actual ruled boxes** (draw
 its embedded AcroForm fields. Detection re-runs on every open, so a re-issued version of a form
 still fills without any setup.
 
+What the detector (`src/pdfGrid.js`, pure and unit-tested; `src/pdfGeometry.js` reads the page)
+places on a page:
+
+- **Empty ruled cells** — a box in each, skipping the printed header row (a heading is the whole
+  text of its cell, with the table's label column to its left; a task that merely wraps onto a
+  line reading "condition" is not a heading), cells that hold text or a picture, and cells too
+  short to write in. A cell is typed into or tapped (OK / N/A / Fail) by its column heading; a
+  narrow column with no status heading is tapped **unless** its row or column asks for a figure
+  ("Voltage (R): Volts", "Grading (1-5)", "Actual Reading"), in which case it is typed.
+- **Shading bands** — Word paints the grey of a shaded row or column as one rectangle across all
+  its cells; that rectangle is recognised as a band (its children tile it) and discarded, so
+  shaded rows keep their boxes.
+- **Prompts in cells** — "Record water added", "Start batteries:" printed inside an answer cell
+  get a box beside them (or under them when the cell is narrow).
+- **Write-on lines** — typed runs of underscores, dashes or dots ("Fuel start: ____Litres",
+  "Genset:......") and drawn rules with a label beside or above them ("Notes/Remarks:" over rows
+  of dashes) each get a box; the label is the words before the blank.
+
+`npm run inspect-pdf form.pdf` runs the same detection over a PDF on disk and prints the fields
+page by page, which is how a mis-detection is diagnosed without the app.
+
+**One footer for every page.** Before a Word document is converted (on either route),
+`unifyPageFooters` in `src/docxPreflight.js` switches off Word's "different odd and even pages":
+the procedures mirror their footer across a printed spread, which on a screen made the page number
+jump from left to right on alternate pages. The default (odd-page) header and footer are used
+throughout; a first-page header/footer is kept.
+
 Because the LibreOffice route produces a *vector* PDF with real ruled lines, field detection gets
 better input from it than from the in-browser route (which measures a re-flowed HTML copy). Better
 fidelity and better box placement come from the same change.
