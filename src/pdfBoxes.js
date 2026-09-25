@@ -1,6 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
-import { buildCells, detectPageFields } from './pdfGrid.js'
+import { buildCells, detectPageFields, inheritColumnKinds } from './pdfGrid.js'
 import { collectGeometry, textTokens } from './pdfGeometry.js'
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ export async function detectPdfBoxes(bytes) {
       // page on its own, which contains a pathological page without ever
       // costing the pages after it.
     }
-    return fields
+    return inheritColumnKinds(fields)
   } finally {
     task.destroy?.()
     worker.destroy?.()

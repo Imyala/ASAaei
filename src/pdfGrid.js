@@ -216,7 +216,7 @@ export const MAX_FIELDS_PER_PAGE = 1200
 const MIN_CELL_H = 10 // points
 
 // A clause or task number: "G.2.1.1", "A.1.15", "9.2.6", "C.2.2.4".
-const CLAUSE_RX = /^(?:[A-Z]{1,3}[.-]?)?\d{1,3}(?:\.\d{1,3})+[a-z]?$/
+const CLAUSE_RX = /^(?:[A-Z]{1,3}[.-]?\d{1,3}|\d{1,3}\.\d{1,3})(?:\.\d{1,3})*[a-z]?$/
 
 // How much of a label is kept as a field's placeholder. It is the START of the
 // label that is kept: "Check condition of all engine couplings, includ…" tells
@@ -250,6 +250,62 @@ export function detectPageFields({ cells, texts, hlines = [], pw, ph, pageIndex,
   if (cells.length >= 4) for (const f of inlineChoiceFields(cells, texts, pw, ph, pageIndex)) add(f)
   for (const f of blankLineFields(texts, hlines, cells, pw, ph, pageIndex)) add(f)
   return out
+}
+
+// A table carried on from the page before keeps its columns' kinds. The
+// heading it repeats at the top of the new page can be partial — the fuel
+// procedure's Day Tank table repeats only "No. | | | | OK/Not OK" — and a
+// table's tail may repeat none, so a column that tapped OK / N/A / Fail on
+// one page came out as typing boxes on the next (84 cells on two pages of
+// the fuel procedure). A column of typing boxes takes the taps (and their
+// wording) of the column in the same place on the previous page, when every
+// box of both columns agrees. Pages in order, so a long table carries on.
+export function inheritColumnKinds(fields, tol = 0.004) {
+  const byPage = new Map()
+  for (const f of fields) {
+    if (!byPage.has(f.page)) byPage.set(f.page, [])
+    byPage.get(f.page).push(f)
+  }
+  const pages = [...byPage.keys()].sort((a, b) => a - b)
+  const out = new Map(fields.map((f) => [f, f]))
+  for (const p of pages) {
+    const prev = (byPage.get(p - 1) || []).map((f) => out.get(f))
+    if (!prev.length) continue
+    const here = byPage.get(p)
+    // The same table can sit a few points further left or right on the
+    // next page: the shift that lines up the most columns of equal width
+    // (at least two of them) is the table's.
+    const votes = new Map()
+    const colsOf = (fs) => [...new Map(fs.map((f) => [`${Math.round(f.xPct / tol)}:${Math.round(f.wPct / tol)}`, f])).values()]
+    const hereCols = colsOf(here)
+    for (const a of colsOf(prev)) {
+      for (const b of hereCols) {
+        if (Math.abs(a.wPct - b.wPct) > tol) continue
+        const k = Math.round((b.xPct - a.xPct) / tol)
+        votes.set(k, (votes.get(k) || 0) + 1)
+      }
+    }
+    const [bestK, score] = [...votes.entries()].sort((a, b) => b[1] - a[1])[0] || [0, 0]
+    if (score < 2) continue
+    const dx = bestK * tol
+    const same = (a, b) => Math.abs(a.xPct - b.xPct) <= tol * 1.5 && Math.abs(a.wPct - b.wPct) <= tol
+    const shifted = (o) => ({ xPct: o.xPct + dx, wPct: o.wPct })
+    const done = new Set()
+    for (const f of here) {
+      if (f.type !== 'text' || done.has(f)) continue
+      const col = here.filter((o) => same(o, f))
+      col.forEach((o) => done.add(o))
+      const before = prev.filter((o) => same(shifted(o), f))
+      if (before.length < 2 || before.some((o) => o.type !== 'status' || o.covers)) continue
+      const options = before[0].options || []
+      const sameCycle = (o) => (o.options || []).join('|') === options.join('|')
+      if (!before.every(sameCycle)) continue
+      // what already taps here must tap the same way; readings stay typed
+      if (col.some((o) => o.type !== 'text' && !(o.type === 'status' && !o.covers && sameCycle(o)))) continue
+      for (const o of col) if (o.type === 'text' && !o.reading) out.set(o, { ...o, type: 'status', options, label: 'Result' })
+    }
+  }
+  return fields.map((f) => out.get(f))
 }
 
 // Turn empty cells into fields, classified by width and column header.
@@ -381,6 +437,29 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     const firstText = row.find(hasText)
     return !!firstText && firstText.x >= c.x + c.w - 2 && row.every((o) => o.x >= c.x || !hasText(o))
   }
+  // A column's title: the text of the nearest header-row cell above it
+  // (headerFor gives the nearest text of any kind, which in a column of
+  // printed limits is the "N/A" of the row before).
+  const titleOf = (c) => {
+    const t = cells.filter((o) => o !== c && o.y + o.h <= c.y + 2 && sameCol(o, c) && inHeaderRow(o) && textIn(o))
+      .sort((a, b) => b.y - a.y)[0]
+    return t ? textIn(t) : ''
+  }
+  // The tail of a row cut by a page break: a row of nothing but blank cells
+  // at the top of the page, straight under the heading the table repeats
+  // there and straight over a numbered row. What the tech records for that
+  // row is on the page before; boxes here were a second set for it.
+  const splitRowTail = (c) => {
+    if (c.y > ph * 0.3) return false
+    const row = [c, ...rowOf(c)]
+    if (row.some(hasText)) return false
+    const top = Math.min(...row.map((o) => o.y)), bottom = Math.max(...row.map((o) => o.y + o.h))
+    const above = cells.filter((o) => Math.abs(o.y + o.h - top) <= 2)
+    const below = cells.filter((o) => Math.abs(o.y - bottom) <= 2)
+    if (!above.length || !above.every((o) => inHeaderRow(o) || hasText(o)) || !above.some(inHeaderRow)) return false
+    const first = below.sort((a, b) => a.x - b.x)[0]
+    return !!first && CLAUSE_RX.test(textIn(first).replace(/\.$/, ''))
+  }
   // The column's status heading when it is printed BELOW the cell: the rows a
   // table carries over the top of a page come before the header it repeats
   // there ("9.2.6", "9.2.7" above "Clause | Tasks | 1M± | 3M** | Result").
@@ -393,7 +472,9 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
       const t = textIn(o)
       if (!t) continue
       if (isStatusHeading(t) && inHeaderRow(o)) return t
-      if (!isStatusToken(t)) return ''
+      // a heading of two or three rows ("SUPPLY AIR SMOKES" over
+      // "Pass/Fail") is read down to its last
+      if (!isStatusToken(t) && !(inHeaderRow(o) || isTopCaptionCell(o) || o.y - (c.y + c.h) < 60)) return ''
     }
     return ''
   }
@@ -456,10 +537,17 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
       }
     }
     if (!statusHeading && strayInTextColumn(c)) continue
+    if (splitRowTail(c)) continue
     // the row label sits to the left of the cell on the same row — use it as
     // the field label so profile autofill (SAP ID, name, date) still works
     const rowLabel = rowLabelFor(c)
     const heading = headerFor(c)
+    // LUL / LPL print a task's lower and upper limits ("N/A", "3%", "SCD");
+    // a blank one is "no limit", not a place to answer, when the row has its
+    // own Result or Action column. (A parameters table whose LUL column is
+    // the thing recorded has no such column, and keeps its boxes.)
+    if (/^(?:lul|lpl)$/i.test(titleOf(c)) && rowOf(c).some((o) => o.x >= c.x + c.w - 2
+      && /result|remark|comment|action/i.test(titleOf(o)))) continue
 
     // A box that asks for a FIGURE is typed into, however narrow it is. The
     // performance test run table is twelve narrow columns against row labels
@@ -490,7 +578,14 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
         continue
       }
     }
-    let type = namesUnit ? 'text' : statusHeading || (narrow && !asksForFigure) ? 'status' : 'text'
+    // The shape of a task row, when the table's headings are on another page
+    // (the fire and smoke damper tables): a task described on the left, a
+    // wide blank Remarks cell on the right, and narrow blank cells between —
+    // those are the tick-off columns.
+    const taskRowTick = !asksForFigure && c.w <= pw * 0.07 && !heading && !titleOf(c)
+      && rowOf(c).some((o) => o.x + o.w <= c.x + 2 && textIn(o).length >= 28)
+      && rowOf(c).some((o) => o.x >= c.x + c.w - 2 && o.w >= c.w * 2.5 && !hasText(o))
+    let type = namesUnit ? 'text' : statusHeading || ((narrow || taskRowTick) && !asksForFigure) ? 'status' : 'text'
 
     if (type === 'text' && /signature/i.test(rowLabel)) type = 'signature'
 
@@ -510,7 +605,10 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     // A status cell carries the wording its own column asks for, so a
     // "Pass/Fail" column cycles Pass → N/A → Fail rather than stamping "OK"
     // into a form that never uses the word. Empty means the default cycle.
-    out.push(mkField(type, pageIndex, c, pw, ph, label, type === 'status' ? statusCycleFor(statusHeading) : []))
+    const field = mkField(type, pageIndex, c, pw, ph, label, type === 'status' ? statusCycleFor(statusHeading) : [])
+    // typed because it asks for a figure: never made a tap by the page after
+    if (type === 'text' && (asksForFigure || namesUnit)) field.reading = true
+    out.push(field)
     if (out.length >= MAX_FIELDS_PER_PAGE) break
   }
   return out
@@ -1082,6 +1180,25 @@ function mergeSplitCells(cells, texts) {
     return false
   }
 
+  // Where two columns of their own meet: some row has a heading on either
+  // side of the line ("0 deg. | 180 deg.", "Test equipment | Model", "On
+  // Pass/Fail | Off Pass/Fail"). A content control's square never has.
+  // Those answer cells were joined into one box, two readings in one place.
+  const hasTextCache = new Map()
+  const hasText = (c) => {
+    if (!hasTextCache.has(c)) hasTextCache.set(c, cellHasText(c, texts))
+    return hasTextCache.get(c)
+  }
+  const divides = new Set()
+  for (const list of bands.values()) {
+    const row = list.filter(hasText).sort((a, b) => a.x - b.x)
+    for (let i = 1; i < row.length; i++) {
+      const a = row[i - 1], b = row[i]
+      if (Math.abs(a.x + a.w - b.x) <= 2) divides.add(Math.round(b.x / 2))
+    }
+  }
+  const isDivide = (x) => [-1, 0, 1].some((d) => divides.has(Math.round(x / 2) + d))
+
   const merged = []
   for (const list of bands.values()) {
     const row = [...list].sort((a, b) => a.x - b.x)
@@ -1091,8 +1208,9 @@ function mergeSplitCells(cells, texts) {
       const joins = run
         && Math.abs(run.x + run.w - c.x) <= 2       // touching
         && Math.abs(run.h - c.h) <= 3               // same row height
-        && !cellHasText(run, texts) && !cellHasText(c, texts) // both blank
+        && !hasText(run) && !hasText(c)             // both blank
         && isKnownSpan(joined.x, joined.w)          // the column's real width
+        && !isDivide(c.x)                           // not two headed columns
       if (joins) { run = joined; continue }
       if (run) merged.push(run)
       run = c

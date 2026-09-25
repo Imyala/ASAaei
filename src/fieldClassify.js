@@ -79,5 +79,9 @@ export function isStatusHeaderToken(text) {
 export function isReadingLabel(text) {
   const t = norm(text)
   if (!t || t.length > 48) return false
+  // "9.2.2 Check oil level on pump is OK." is a task to tick off, though it
+  // mentions a level; "Check and record the level" asks for the figure.
+  if (/^(?:[A-Z]?[\d.]+\s+)?(?:check|inspect|confirm|ensure|verify|clean|replace|test|examine|lubricate|tighten|remove|drain)\b/i.test(t)
+    && !/record|measure|read(?:ing)?\b|note\b/i.test(t)) return false
   return RX.reading.test(t)
 }
