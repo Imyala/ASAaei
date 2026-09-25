@@ -247,7 +247,11 @@ export function detectPageFields({ cells, texts, hlines = [], pw, ph, pageIndex,
     for (const f of promptFields(cells, texts, pw, ph, pageIndex)) add(f)
   }
   for (const f of inlineTickFields(texts, pw, ph, pageIndex)) add(f)
-  if (cells.length >= 4) for (const f of inlineChoiceFields(cells, texts, pw, ph, pageIndex)) add(f)
+  if (cells.length >= 4) {
+    for (const f of inlineChoiceFields(cells, texts, pw, ph, pageIndex)) add(f)
+    for (const f of unitMarkerFields(cells, texts, pw, ph, pageIndex)) add(f)
+    for (const f of labelLineFields(cells, texts, pw, ph, pageIndex)) add(f)
+  }
   for (const f of blankLineFields(texts, hlines, cells, pw, ph, pageIndex)) add(f)
   return out
 }
@@ -841,6 +845,167 @@ export function inlineChoiceFields(cells, texts, pw, ph, pageIndex) {
     const bottom = lines[lines.length - 1].yTop - t.h * 0.3 + t.h * 0.75
     const box = { x: host.x + pad, y: Math.max(host.y + pad, top), w: host.w - pad * 2, h: Math.max(bottom - top, MIN_CELL_H) }
     out.push({ ...mkField('status', pageIndex, box, pw, ph, lead ? lead[1] : opts.join(' / '), opts, 0), covers: true })
+  }
+  return out
+}
+
+// The smallest cell holding a token, or null.
+function hostOf(t, cells) {
+  const cx = (t.x + t.xr) / 2, cy = t.yTop - (t.h || 9) * 0.3
+  return cells.filter((c) => cx > c.x && cx < c.x + c.w && cy > c.y && cy < c.y + c.h)
+    .sort((a, b) => a.w * a.h - b.w * b.h)[0] || null
+}
+
+// The tokens of a cell in lines: { y, h, x, xr, text, tokens }, top down.
+function linesOf(tokens) {
+  const lines = []
+  for (const t of tokens) {
+    const line = lines.find((l) => Math.abs(l.y - t.yTop) <= Math.max(t.h, l.h) * 0.4)
+    if (line) { line.tokens.push(t); line.h = Math.max(line.h, t.h) } else lines.push({ y: t.yTop, h: t.h || 9, tokens: [t] })
+  }
+  for (const l of lines) {
+    l.tokens.sort((a, b) => a.x - b.x)
+    l.x = l.tokens[0].x
+    l.xr = Math.max(...l.tokens.map((t) => t.xr))
+    l.text = norm(l.tokens.map((t) => t.str).join(' '))
+  }
+  return lines.sort((a, b) => a.y - b.y)
+}
+
+// Units printed in brackets along a line — "[°C]      [%]" in the Comments
+// cell of "Check room conditions, record air temp and humidity", "Sensor
+// reading: [°C] [%]" — each ask for the figure written before them. (A cell
+// holding nothing but its unit is glyphCellFields' to box.)
+const BRACKET_UNIT = /^\[\s*([^\]]{1,6}?)\s*\]$/
+export function unitMarkerFields(cells, texts, pw, ph, pageIndex) {
+  const out = []
+  const pad = 1.5
+  for (const t of texts) {
+    const m = norm(t.str).match(BRACKET_UNIT)
+    if (!m || !(UNIT_RX.test(m[1]) || /^(?:l\/s|m\/s|m3\/s|m³\/s|pa)$/i.test(m[1]))) continue
+    const host = hostOf(t, cells)
+    if (!host) continue
+    const inside = tokensInside(host, texts)
+    if (inside.length < 2) continue
+    const onLine = inside.filter((o) => o !== t && Math.abs(o.yTop - t.yTop) <= Math.max(o.h, t.h) * 0.4 && o.xr <= t.x + 1)
+      .sort((a, b) => b.xr - a.xr)
+    const prev = onLine[0]
+    const x1 = prev ? prev.xr + 3 : host.x + pad
+    const x2 = t.x - 2
+    if (x2 - x1 < 18) continue
+    // what is being read: the words before it on its line ("Sensor
+    // reading"), else the row's task beside the cell
+    const words = onLine.filter((o) => !BRACKET_UNIT.test(norm(o.str))).reverse().map((o) => o.str).join(' ')
+    const task = texts.filter((o) => o.xr <= host.x + 2 && Math.abs(o.yTop - t.yTop) <= 12).sort((a, b) => a.x - b.x).map((o) => o.str).join(' ')
+    const what = norm(words).replace(/:$/, '') || norm(task) || 'Reading'
+    const h = Math.max(t.h * 1.35, MIN_CELL_H)
+    out.push({ ...mkField('text', pageIndex, { x: x1, y: t.yTop + t.h * 0.3 - h, w: x2 - x1, h }, pw, ph, `${what.slice(0, 48)} (${m[1]})`, [], 0), reading: true })
+  }
+  return out
+}
+
+// Labels to write beside, line by line, in a Remarks, Comments or Result
+// cell: "Control valve setting:" under "CW Flow ☐ L/s", "Suction Pressure:"
+// under unit columns "1  2", "Time on load:". And an instruction to record
+// ("Record here which detector zones activated the GFA") gets the blank
+// space under it. promptFields reads a cell as whole paragraphs of prompts,
+// and these cells mix prompts with readings and longer instructions.
+export function labelLineFields(cells, texts, pw, ph, pageIndex) {
+  const out = []
+  const pad = 1.5
+  const isAnswerHead = (t) => !!t && (isRemarksToken(t) || /^results?\b|\blul\b|\blpl\b/i.test(t))
+  // (a section row across the whole table — "Coils and Cabinet" — is not
+  // the column's heading)
+  const headOf = (c) => {
+    // (nor is a heading that covers only part of a cell merged across
+    // several columns — such a cell has no one heading)
+    const above = cells.filter((o) => o !== c && o.y + o.h <= c.y + 2 && o.w <= c.w * 1.6
+      && Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= 0.6 * c.w)
+      .sort((a, b) => b.y - a.y)
+    let seen = false
+    for (const o of above) {
+      const t = textInside(o, texts)
+      if (!t) continue
+      seen = true
+      // another answer place in the column ("DP Reading:", "____ L/s",
+      // "Record here which detector zones activated the GFA")
+      // and a note written in the column ("If faults cannot be resolved,
+      // raise an ASID.", "Contractor needs to be engaged") is not its
+      // heading either: read on up it to the one that is
+      if (t.length <= 40 && isAnswerHead(t)) return t
+    }
+    // no ruled heading cell (a heading printed over the table's top rule):
+    // the nearest caption printed above the column
+    if (seen) return ''
+    const cap = texts.filter((t) => t.yTop < c.y && (t.x + t.xr) / 2 > c.x && (t.x + t.xr) / 2 < c.x + c.w)
+      .sort((a, b) => b.yTop - a.yTop)[0]
+    return cap && norm(cap.str).length <= 40 && isAnswerHead(norm(cap.str)) ? norm(cap.str) : ''
+  }
+  for (const c of cells) {
+    if (c.h < MIN_CELL_H) continue
+    const inside = tokensInside(c, texts)
+    if (!inside.length) continue
+    if (!isAnswerHead(headOf(c))) continue
+    const lines = linesOf(inside)
+    // a label with its value cell right beside it needs nothing more (a
+    // stack of labels in one cell cannot all be answered by the one cell
+    // beside it: "Time on load: / Start volts: / End volts: / Load:")
+    const next = cells.find((o) => o !== c && Math.abs(o.x - (c.x + c.w)) <= 2
+      && Math.min(o.y + o.h, c.y + c.h) - Math.max(o.y, c.y) >= 0.5 * Math.min(o.h, c.h))
+    const nextText = next ? textInside(next, texts) : ''
+    const labels = lines.filter((l) => /:$/.test(l.text)).length
+    if (labels <= 1 && next && (!nextText || (nextText.length <= 12 && !/:$/.test(nextText)))) continue
+    // unit numbers printed over the labels ("1   2"): a box under each
+    const nums = lines.find((l) => l.tokens.length >= 2 && l.tokens.every((t) => /^\d$/.test(t.str)))
+    const right = c.x + c.w - pad
+    lines.forEach((l, i) => {
+      if (l === nums) return
+      const text = l.text
+      // the end of a wrapped instruction ("Where applicable, record the /
+      // following values:") is not a label; a line under a finished reading
+      // ("CW Flow ____ L/s" over "Control valve setting:") starts afresh
+      const prev = lines[i - 1]
+      const carriesOn = prev && prev !== nums && l.y - prev.y <= l.h * 1.6 && !/:$/.test(prev.text)
+        && !BLANK_RUN.test(prev.text) && !BRACKET_UNIT.test(prev.tokens[prev.tokens.length - 1].str) && !/[\u2610\u25a1]/.test(prev.text)
+      const isLabel = /:$/.test(text) && text.length <= 40 && !/^notes?\b/i.test(text) && !carriesOn
+        && !/\b(?:follows|following|either|below|include[sd]?|including|contains?|values|steps)\s*:$/i.test(text)
+        // "Alternator 3M 1Y Comment:" heads a column of the log sheet
+        && !/(?:^|\s)\d{1,2}\s*[dwmqy](?:\s|$)/i.test(text)
+      const isAsk = /^(?:record|enter|list|write)\b/i.test(text) && text.length <= 90 && !/\.\s/.test(text)
+      if (!isLabel && !isAsk) return
+      const lineH = Math.max(l.h * 1.35, MIN_CELL_H)
+      const lineTop = l.y + l.h * 0.3 - lineH
+      const free = right - (l.xr + 3)
+      if (isLabel && free >= 30) {
+        const label = text.replace(/:$/, '')
+        if (nums && nums.y < l.y) {
+          const ds = nums.tokens
+          const step = ds.length > 1 ? ds[1].x - ds[0].x : 40
+          for (const d of ds) {
+            const cx = (d.x + d.xr) / 2, half = Math.min(step / 2 - 2, 24)
+            const x1 = Math.max(l.xr + 3, cx - half), x2 = Math.min(right, cx + half)
+            if (x2 - x1 >= 12) out.push(mkField('text', pageIndex, { x: x1, y: lineTop, w: x2 - x1, h: lineH }, pw, ph, `${label} ${d.str}`, [], 0))
+          }
+        } else {
+          out.push(mkField('text', pageIndex, { x: l.xr + 3, y: lineTop, w: free, h: lineH }, pw, ph, label, [], 0))
+        }
+        return
+      }
+      if (!isAsk) return
+      // beside the instruction when it leaves room ("Record water added"
+      // with its box to the right), else the blank band under it, down to
+      // the next line or the cell's foot
+      if (free >= 60) {
+        out.push(mkField('text', pageIndex, { x: l.xr + 3, y: lineTop, w: free, h: lineH }, pw, ph, text.slice(0, 60), [], 0))
+        return
+      }
+      const next = lines[i + 1]
+      const top = l.y + l.h * 0.4
+      const bottom = next ? next.y - next.h - 1 : c.y + c.h - pad
+      if (bottom - top >= MIN_CELL_H) {
+        out.push(mkField('text', pageIndex, { x: c.x + pad, y: top, w: c.w - pad * 2, h: bottom - top }, pw, ph, text.slice(0, 60), [], 0))
+      }
+    })
   }
   return out
 }
