@@ -1,5 +1,5 @@
 // Node test for the pure grid logic (no pdfjs). Run: node src/pdfGrid.test.mjs
-import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent, MAX_FIELDS_PER_PAGE, gradeScale, choiceOptions, TICK_OPTIONS } from './pdfGrid.js'
+import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent, MAX_FIELDS_PER_PAGE, gradeScale, choiceOptions, answerChoices, TICK_OPTIONS } from './pdfGrid.js'
 
 let pass = 0, fail = 0
 const ok = (cond, msg) => { if (cond) { pass++ } else { fail++; console.error('  ✗ ' + msg) } }
@@ -775,6 +775,61 @@ console.log('a stack of bare note lines carried onto a new page gets boxes')
   const hlines = [{ y: 92.5, x1: 116, x2: 541 }, { y: 114.5, x1: 116, x2: 541 }]
   const fields = blankLineFields([T('Primary and Standby Generators', 150, 350, 40, 8)], hlines, [], 595, 842, 0)
   ok(fields.length === 2 && fields.every((f) => f.label === 'Notes'), `both lines get a box (got ${fields.length})`)
+}
+
+console.log('answers printed in a Result cell are a question, not a heading')
+{
+  ok(answerChoices('OK / Not OK / NA')?.join() === 'OK,Not OK,NA', 'OK / Not OK / NA')
+  ok(answerChoices('Yes / No / N/A')?.join() === 'Yes,No,N/A', 'N/A stays one option')
+  ok(answerChoices('OK / Work required')?.join() === 'OK,Work required', 'OK / Work required')
+  ok(answerChoices('Verified Yes/No') === null, 'the end of a heading is not a choice')
+  ok(answerChoices('Wood / Steel') === null, 'no answer word, no choice')
+  ok(answerChoices('Check the oil') === null, 'prose is not a choice')
+
+  // Task No | Task | Result | Comments, rows printing "OK / Not OK / NA"
+  const xs = [50, 100, 300, 380], ws = [50, 200, 80, 140]
+  const cells = [], texts = []
+  const row = (y) => { for (let c = 0; c < 4; c++) cells.push({ x: xs[c], y, w: ws[c], h: 30 }) }
+  row(100); texts.push(T('Task No', 53, 90, 115, 8), T('Task', 103, 130, 115, 8), T('Result', 303, 330, 115, 8), T('Comments/Reference Number', 383, 510, 115, 8))
+  const tasks = ['Confirm site drawings are up to date', 'Confirm mandatory signage is up to date', 'Confirm socket outlets identify the source']
+  tasks.forEach((t, r) => {
+    row(130 + r * 30)
+    texts.push(T(`G.2.1.${r + 1}`, 53, 90, 145 + r * 30, 8), T(t, 103, 290, 145 + r * 30, 8), T(r ? 'OK / Not OK' : 'OK / Not OK / NA', 303, 370, 145 + r * 30, 8))
+  })
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  const taps = fields.filter((f) => f.type === 'status')
+  ok(taps.length === 3 && taps.every((f) => f.covers && f.options[0] === 'OK'), `each Result cell taps its own choices (got ${taps.map((f) => f.options.join('/')).join(', ')})`)
+  ok(fields.filter((f) => f.type === 'text' && f.xPct * PW > 379).length === 3, 'and every Comments cell has its box')
+  ok(!fields.some((f) => f.yPct * PH < 128), 'the heading row stays a heading row')
+}
+
+console.log('a choice on a line of its own inside a bigger cell')
+{
+  // | J.1.5 | Wooden poles ... | OK / Not OK  Comments: ____ |
+  const cells = [{ x: 50, y: 100, w: 40, h: 90 }, { x: 90, y: 100, w: 300, h: 90 }, { x: 390, y: 100, w: 110, h: 90 },
+    { x: 50, y: 190, w: 40, h: 20 }, { x: 90, y: 190, w: 300, h: 20 }, { x: 390, y: 190, w: 110, h: 20 }]
+  const texts = [T('J.1.5', 53, 80, 112, 8), T('Wooden poles Inspect pole for defects', 93, 300, 112, 8),
+    T('OK / Not OK', 420, 470, 112, 8), T('Comments:', 420, 465, 128, 8),
+    // "Remote: OK" / "/ Work" / "required", wrapped in a narrow cell
+    T('Remote: OK', 393, 440, 201, 8)]
+  const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
+  const tap = fields.find((f) => f.type === 'status' && f.yPct * PH < 120)
+  ok(tap && tap.options.join() === 'OK,Not OK' && tap.covers && tap.wPct * PW > 100, 'the printed "OK / Not OK" line gets a tap the width of the cell')
+
+  const cells2 = [{ x: 50, y: 100, w: 200, h: 46 }, { x: 250, y: 100, w: 57, h: 46 }, { x: 307, y: 100, w: 150, h: 46 }, { x: 457, y: 100, w: 40, h: 46 }]
+  const texts2 = [T('G.5 Confirm functional control', 53, 200, 112, 8), T('Remote: OK', 253, 300, 112, 8), T('/ Work', 253, 285, 124, 8), T('required', 253, 290, 136, 8)]
+  const f2 = detectPageFields({ cells: cells2, texts: texts2, pw: PW, ph: PH, pageIndex: 0 })
+  const remote = f2.find((f) => f.type === 'status' && f.label === 'Remote')
+  ok(remote && remote.label === 'Remote' && remote.options.join() === 'OK,Work required', `a labelled choice wrapped over three lines (got ${remote && remote.options.join('/')})`)
+}
+
+console.log('a table of contents is not a page of write-on lines')
+{
+  const texts = [T('1', 54, 60, 106, 10), T('Purpose', 119, 160, 106, 10), T('.'.repeat(120), 160, 529, 106, 10), T('5', 530, 536, 106, 10),
+    T('Appendix G Test sheets ........................ 56', 54, 536, 126, 10)]
+  ok(blankLineFields(texts, [], [], 595, 842, 0).length === 0, 'no box on a leader to a page number')
+  const form = [T('Date: ....../....../......', 54, 200, 106, 10), T('R.........A', 300, 340, 106, 10)]
+  ok(blankLineFields(form, [], [], 595, 842, 0).length === 4, 'a date line and a reading between letters still get boxes')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

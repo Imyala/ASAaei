@@ -215,6 +215,9 @@ export const MAX_FIELDS_PER_PAGE = 1200
 // spacer or the gap between two table borders, never an input.
 const MIN_CELL_H = 10 // points
 
+// A clause or task number: "G.2.1.1", "A.1.15", "9.2.6", "C.2.2.4".
+const CLAUSE_RX = /^(?:[A-Z]{1,3}[.-]?)?\d{1,3}(?:\.\d{1,3})+[a-z]?$/
+
 // How much of a label is kept as a field's placeholder. It is the START of the
 // label that is kept: "Check condition of all engine couplings, includ…" tells
 // the tech which row they are on, where the old tail ("d water pump couplin")
@@ -244,6 +247,7 @@ export function detectPageFields({ cells, texts, hlines = [], pw, ph, pageIndex,
     for (const f of promptFields(cells, texts, pw, ph, pageIndex)) add(f)
   }
   for (const f of inlineTickFields(texts, pw, ph, pageIndex)) add(f)
+  if (cells.length >= 4) for (const f of inlineChoiceFields(cells, texts, pw, ph, pageIndex)) add(f)
   for (const f of blankLineFields(texts, hlines, cells, pw, ph, pageIndex)) add(f)
   return out
 }
@@ -270,7 +274,32 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   // condition monitoring matrix, all of which opened with no boxes. (A lone
   // "OK"/"Pass" *value* is deliberately not counted, so re-opening a
   // part-filled form can't mistake its answers for headings.)
-  const inHeaderRow = headerRowTest(cells, textIn)
+  // A cell printing the answers to circle — "OK / Not OK / NA" in a Result
+  // column — is a question, not a heading. Its row carries a task to the
+  // left (a clause number or a description), and its column has a status
+  // heading above it or the same choice in other rows. Read as a heading, it
+  // made its whole row a header row: on the distribution procedure's
+  // Appendix G-K checklists some seventy rows had no tap and no Comments box.
+  const rowOf = (c) => cells.filter((o) => o !== c && Math.min(o.y + o.h, c.y + c.h) - Math.max(o.y, c.y) >= 0.5 * Math.min(o.h, c.h))
+  const sameCol = (o, c) => Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= 0.6 * Math.min(o.w, c.w)
+  const choiceCache = new Map()
+  const printedChoice = (c) => {
+    if (choiceCache.has(c)) return choiceCache.get(c)
+    let out = null
+    const t = textIn(c)
+    const opts = answerChoices(t)
+    if (opts) {
+      const task = rowOf(c).some((o) => o.x + o.w <= c.x + 2 && (CLAUSE_RX.test(textIn(o)) || textIn(o).length >= 28))
+      const col = cells.filter((o) => o !== c && sameCol(o, c))
+      const headed = col.some((o) => o.y + o.h <= c.y + 2 && c.y - o.y < 320
+        && (/^results?\b/i.test(textIn(o)) || isStatusToken(textIn(o)) || isStatusHeaderToken(textIn(o))))
+      const repeated = col.some((o) => answerChoices(textIn(o)))
+      if (task && (headed || repeated)) out = opts
+    }
+    choiceCache.set(c, out)
+    return out
+  }
+  const inHeaderRow = headerRowTest(cells, textIn, printedChoice)
   const isTopCaptionCell = topCaptionTest(cells, texts)
 
   // A cell is "occupied" by a picture when the picture covers most of it — a
@@ -382,7 +411,7 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   for (const c of cells) {
     // A cell printed with a choice to circle — "Done/Not Done" in a Remarks
     // cell — taps through that choice, over the printed words.
-    const choice = choiceOptions(textIn(c))
+    const choice = choiceOptions(textIn(c)) || printedChoice(c)
     if (choice && c.h >= MIN_CELL_H && !inHeaderRow(c) && !isTopCaptionCell(c)) {
       out.push({ ...mkField('status', pageIndex, c, pw, ph, textIn(c), choice), covers: true })
       if (out.length >= MAX_FIELDS_PER_PAGE) break
@@ -529,14 +558,14 @@ function rowLabelLookup(cells, texts, textIn) {
 }
 
 // Which cells sit on a printed column-title row (see cellsToFields).
-function headerRowTest(cells, textIn) {
+function headerRowTest(cells, textIn, isChoice = () => false) {
   const sameRow = (a, b) => {
     const ov = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
     return ov >= 0.5 * Math.min(a.h, b.h)
   }
   const isHeading = (c) => {
     const t = textIn(c)
-    return !!t && t.length <= 40 && (isRemarksToken(t) || isStatusHeaderToken(t))
+    return !!t && t.length <= 40 && (isRemarksToken(t) || isStatusHeaderToken(t)) && !isChoice(c)
   }
   const header = new Set()
   for (const h of cells) {
@@ -672,6 +701,52 @@ export function inlineTickFields(texts, pw, ph, pageIndex) {
   return out
 }
 
+// Answers printed on a line of their own inside a bigger cell — "OK / Not
+// OK" over "Comments: ____" in the distribution procedure's pole and pillar
+// checks, "OK / Not Ok" over "ASID No (If needed):" — each get a tap box the
+// width of the cell, on that line, over the printed words. A cell whose other
+// words are a heading ("Result") is a column title, not a question.
+export function inlineChoiceFields(cells, texts, pw, ph, pageIndex) {
+  const out = []
+  const pad = 1.5
+  for (const t of texts) {
+    // "Remote: OK" then "/ Work" then "required": a label, then the choice
+    const lead = norm(t.str).match(/^([A-Za-z][A-Za-z ]{1,20}):\s*(.+)$/)
+    const first = lead ? lead[2] : t.str
+    if (!startsChoice(first)) continue
+    const cy = t.yTop - t.h * 0.3
+    const host = cells
+      .filter((c) => (t.x + t.xr) / 2 > c.x && (t.x + t.xr) / 2 < c.x + c.w && cy > c.y && cy < c.y + c.h)
+      .sort((a, b) => a.w * a.h - b.w * b.h)[0]
+    if (!host) continue
+    const inHost = tokensInside(host, texts)
+    if (inHost.some((o) => o !== t && Math.abs(o.yTop - t.yTop) <= t.h * 0.5)) continue // not a line of its own
+    // A choice wrapped in a narrow column carries on under itself: "OK /
+    // Work" then "required". The longest run of lines that still reads as
+    // one choice is the choice.
+    const below = (o) => inHost.find((n) => n.yTop > o.yTop + o.h * 0.5 && n.yTop < o.yTop + o.h * 1.8 && Math.abs(n.x - o.x) <= 3)
+    let lines = [t]
+    let opts = answerChoices(first)
+    for (let n = below(t), run = [t]; n && run.length < 3; n = below(n)) {
+      run = [...run, n]
+      const o = answerChoices([first, ...run.slice(1).map((r) => r.str)].join(' '))
+      if (o) { lines = run; opts = o }
+    }
+    if (!opts) continue
+    const others = inHost.filter((o) => !lines.includes(o))
+    // A cell of nothing but the choice is cellsToFields' to decide — unless
+    // a label leads it ("Remote: OK / Work required"), which it cannot read.
+    if (!others.length && !lead) continue
+    const rest = norm(others.map((o) => o.str).join(' '))
+    if (others.length && (/^(?:results?|status|outcome|condition)\b/i.test(rest) || rest.length < 6)) continue
+    const top = cy - t.h * 0.75
+    const bottom = lines[lines.length - 1].yTop - t.h * 0.3 + t.h * 0.75
+    const box = { x: host.x + pad, y: Math.max(host.y + pad, top), w: host.w - pad * 2, h: Math.max(bottom - top, MIN_CELL_H) }
+    out.push({ ...mkField('status', pageIndex, box, pw, ph, lead ? lead[1] : opts.join(' / '), opts, 0), covers: true })
+  }
+  return out
+}
+
 export function glyphCellFields(cells, texts, pw, ph, pageIndex) {
   const out = []
   const pad = 1.5
@@ -799,6 +874,16 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
     out.push(mkField(type, pageIndex, box, pw, ph, label || 'Entry', [], 0))
   }
   const placed = [] // { y, x1, x2, label } — lines already given a box, for chaining
+  // A run of dots whose line ends in a page number, in its own token or the
+  // next one along.
+  const PAGE_NO = /^\s*(?:[A-Z]-?)?(?:\d{1,3}|[ivxlc]{1,6})\s*$/i
+  const isLeader = (run, after, tok, x2) => {
+    if (!/^[.…·\s]+$/.test(run)) return false
+    if (after.trim()) return PAGE_NO.test(after)
+    const next = texts.filter((o) => o !== tok && byLine(o, tok) && o.x >= x2 - 2 && o.x - x2 < 14)
+      .sort((a, b) => a.x - b.x)[0]
+    return !!next && PAGE_NO.test(next.str)
+  }
 
   // ---- typed runs ---------------------------------------------------------
   for (const t of texts) {
@@ -825,7 +910,14 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
       // procedure's site lists are full of SAP locations like
       // "AD__-ASAC-TMC_-____-AIU___", and each one sprouted a box.
       const wedged = /\w$/.test(beforeTxt) && /^\w/.test(after)
-      if (wedged && (after.length > 8 || m[0].length <= 4 || !/\s/.test(str))) continue
+      // (A run of dots is never part of a code: "R.........A" is the reading
+      // of phase R, in amps.)
+      const code = !/\s/.test(str) && !/^[.\u2026\u00b7]+$/.test(m[0])
+      if (wedged && (after.length > 8 || m[0].length <= 4 || code)) continue
+      // Dots leading to a page number are a table of contents ("Purpose
+      // ........ 5"), not a line to write on: every entry of both big
+      // procedures' contents pages had a box over its leader.
+      if (isLeader(m[0], after, t, x2)) continue
       const h = Math.max(t.h * 1.35, MIN_CELL_H)
       const label = labelFor(t, beforeTxt, x1, from === 0)
       const host = cellAt((x1 + x2) / 2, t.yTop - t.h * 0.3)
@@ -1021,12 +1113,33 @@ function statusCycleFor(heading) {
 export const TICK_OPTIONS = ['✓', '✗']
 
 // The two choices of a cell printed "Done/Not Done", "Required/Not Required"
-// — a thing and its negation — or null. ("OK/Not OK" is a column heading.)
+// — a thing and its negation — or null. ("OK/Not OK" can be a column
+// heading; see answerChoices.)
 export function choiceOptions(text) {
   const m = norm(text).match(/^([A-Za-z][A-Za-z ]{1,18}?)\s*\/\s*not\s+([A-Za-z][A-Za-z ]{1,18})$/i)
   if (!m || m[1].toLowerCase() !== m[2].toLowerCase() || /^ok$/i.test(m[1])) return null
   return [m[1], `Not ${m[2]}`]
 }
+
+// The answers a cell prints for the tech to circle — "OK / Not OK / NA",
+// "Yes / No", "OK / Not OK / Replaced" — or null. Two to four short options,
+// one of them an answer word. The same words head a column in a blank form
+// ("Result | OK / Not OK"), so whether a cell is a heading or a choice is
+// the caller's to decide from where it sits.
+const ANSWER_WORD = /^(?:ok|not\s*ok|nok|yes|no|n\/a|na|pass|fail|done|not\s+done)$/i
+export function answerChoices(text) {
+  const t = norm(text)
+  if (!t || t.length > 48) return null
+  // "N/A" is one option, not two
+  const parts = t.replace(/\bn\s*\/\s*a\b/gi, '\u0000').split(/\s*\/\s*/)
+    .map((p) => p.replace(/\u0000/g, 'N/A').trim())
+  if (parts.length < 2 || parts.length > 4) return null
+  if (parts.some((p) => p.length > 18 || !/^[A-Za-z][A-Za-z /]*$/.test(p))) return null
+  // led by an answer: "Verified Yes/No" is the end of a heading
+  return ANSWER_WORD.test(parts[0]) ? parts : null
+}
+// Whether a line can open a printed choice: it is one, or its first line.
+const startsChoice = (s) => !!answerChoices(s) || /^(?:ok|yes|pass|done)(?:\s*\/\s*[A-Za-z]*)?$/i.test(norm(s))
 
 // The grades a "Grading (1-5)" / "Score 1 to 10" label asks for, or null.
 export function gradeScale(label) {
