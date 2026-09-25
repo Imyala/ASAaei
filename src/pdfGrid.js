@@ -411,16 +411,32 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
         && /[A-Za-z]{2}/.test(textIn(o)) && !isStatusHeaderToken(textIn(o)) && !isStatusToken(textIn(o)))
       // (one choice in the row: "F/A I/O No. | Pass/Fail | A-1 | Pass/Fail…"
       // is a heading row)
-      const card = !!label && row.some((o) => !textIn(o)) && row.filter((o) => textIn(o)).length >= 2
-        && !row.some((o) => answerChoices(textIn(o)))
+      // (counted within the card — the run of touching cells around it; two
+      // cards can stand side by side on one row)
+      const seg = [c]
+      for (let grew = true; grew;) {
+        grew = false
+        for (const o of row) {
+          if (seg.includes(o)) continue
+          if (seg.some((g) => Math.abs(g.x + g.w - o.x) <= 2 || Math.abs(o.x + o.w - g.x) <= 2)) { seg.push(o); grew = true }
+        }
+      }
+      const others = seg.filter((o) => o !== c)
+      const card = !!label && others.some((o) => !textIn(o)) && others.filter((o) => textIn(o)).length >= 2
+        && !others.some((o) => answerChoices(textIn(o)))
       const task = card || row.some((o) => o.x + o.w <= c.x + 2 && (CLAUSE_RX.test(textIn(o)) || textIn(o).length >= 28))
       const col = cells.filter((o) => o !== c && sameCol(o, c))
-      const headed = col.some((o) => o.y + o.h <= c.y + 2 && c.y - o.y < 320
-        && (/^results?\b/i.test(textIn(o)) || isStatusToken(textIn(o)) || isStatusHeaderToken(textIn(o))))
+      const heading = (o) => /^results?\b/i.test(textIn(o)) || isStatusToken(textIn(o)) || isStatusHeaderToken(textIn(o))
+      const above = col.filter((o) => o.y + o.h <= c.y + 2)
+      const headed = above.some((o) => c.y - o.y < 320 && heading(o))
       const repeated = col.some((o) => answerChoices(textIn(o)))
+      // (or a table carried over from the page before, its heading left
+      // there: rows above it in the column, none of them a heading —
+      // "Yes / F104 Required" in the last row of the heater checklist)
+      const carried = above.length > 0 && !above.some(heading)
       // (a list of plain options — "(UG) - (OH)", "Wood - Steel - Concrete"
       // — is a choice only in such a card)
-      if (answerChoices(t) ? task && (headed || repeated || card) : card) out = opts
+      if (answerChoices(t) ? task && (headed || repeated || card || carried) : card) out = opts
     }
     choiceCache.set(c, out)
     return out
@@ -502,7 +518,11 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   const blankRow = (c) => ![c, ...rowOf(c)].some(hasText)
   const blankRun = (c) => {
     if (!blankRow(c)) return false
-    return cells.some((o) => o !== c && sameCol(o, c) && (Math.abs(o.y - (c.y + c.h)) <= 3 || Math.abs(o.y + o.h - c.y) <= 3) && blankRow(o))
+    if (cells.some((o) => o !== c && sameCol(o, c) && (Math.abs(o.y - (c.y + c.h)) <= 3 || Math.abs(o.y + o.h - c.y) <= 3) && blankRow(o))) return true
+    // or the one blank row straight under a row of column captions ("Test
+    // equipment | Model | Barcode no. | Calibration due date")
+    const above = cells.filter((o) => Math.abs(o.y + o.h - c.y) <= 3 && [c, ...rowOf(c)].some((r) => sameCol(o, r)))
+    return above.length >= 3 && above.every((o) => textIn(o) && textIn(o).length <= 40 && !CLAUSE_RX.test(textIn(o)))
   }
   const strayInTextColumn = (c) => {
     // blank rows left for more entries — two or more together, under a
@@ -511,6 +531,10 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     if (blankRun(c)) return false
     // nor is the blank area under a "Notes:" or "Comments:" caption
     if (notesCaption(c)) return false
+    // nor the one blank in a filled-in record, beside a label that asks for
+    // it ("Inspected by (Signature)", "Date inspected")
+    const left = rowOf(c).find((o) => Math.abs(o.x + o.w - c.x) <= 2 && hasText(o))
+    if (left && textIn(left).length <= 50 && /signature|signed|\bdate\b|\bname\b|number|\bno\.?$/i.test(textIn(left))) return false
     const share = textShare(c)
     if (share >= 0.7 && (leftAllEmpty(c) || (share >= 0.85 && c.w >= pw * 0.18))) return true
     return carriedOver(c)
@@ -553,10 +577,14 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     // nothing but answers all the way down (not a column of hazard icons,
     // nor the "OK" labels printed beside tick boxes)
     if (!head && c.w <= 70) {
-      const col = cells.filter((o) => o !== c && sameCol(o, c) && o.w <= Math.max(c.w * 1.6, 80))
+      // (down to the next heading in the column, where another table starts)
+      const colAll = cells.filter((o) => o !== c && sameCol(o, c) && o.w <= Math.max(c.w * 1.6, 80))
+      const stop = colAll.filter((o) => o.y > c.y && textIn(o) && !ANSWER_MARK.test(textIn(o))).sort((a, b) => a.y - b.y)[0]
+      const col = colAll.filter((o) => !stop || o.y < stop.y)
       const answered = col.filter((o) => (textIn(o) ? ANSWER_MARK.test(textIn(o)) : holdsImage(o)))
       const onlyAnswers = col.every((o) => !textIn(o) || ANSWER_MARK.test(textIn(o)))
-      const task = rowOf(c).some((o) => o.x + o.w <= c.x + 2 && (CLAUSE_RX.test(textIn(o)) || textIn(o).length >= 28))
+      const leftTexts = rowOf(c).filter((o) => o.x + o.w <= c.x + 2 && textIn(o))
+      const task = leftTexts.length >= 2 || leftTexts.some((o) => CLAUSE_RX.test(textIn(o)) || textIn(o).length >= 28)
       if (answered.length >= 2 && onlyAnswers && task) {
         // (with the empty rest of the cell beside a tick picture)
         let right = c.x + c.w
@@ -697,7 +725,9 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
         const tok = texts.find((t) => {
           if (t.yTop >= c.y || !isStatusHeading(t.str)) return false
           const tcx = (t.x + t.xr) / 2
-          return tcx > c.x - 2 && tcx < c.x + c.w + 2 // header sits in this column
+          if (!(tcx > c.x - 2 && tcx < c.x + c.w + 2)) return false // header sits in this column
+          // a choice printed in a row above ("G.1.2 … Yes / No") is not one
+          return !printedChoice(hostOf(t, cells))
         })
         if (tok) statusHeading = tok.str
         else statusHeading = statusHeadingBelow(c, isStatusHeading)
@@ -1353,12 +1383,20 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
   // A run of dots whose line ends in a page number, in its own token or the
   // next one along.
   const PAGE_NO = /^\s*(?:[A-Z]-?)?(?:\d{1,3}|[ivxlc]{1,6})\s*$/i
+  // The leader may be split over several tokens of dots before the number.
   const isLeader = (run, after, tok, x2) => {
     if (!/^[.…·\s]+$/.test(run)) return false
     if (after.trim()) return PAGE_NO.test(after)
-    const next = texts.filter((o) => o !== tok && byLine(o, tok) && o.x >= x2 - 2 && o.x - x2 < 14)
-      .sort((a, b) => a.x - b.x)[0]
-    return !!next && PAGE_NO.test(next.str)
+    for (let hops = 0; hops < 40; hops++) {
+      const next = texts.filter((o) => o !== tok && byLine(o, tok) && o.x >= x2 - 2 && o.x - x2 < 14)
+        .sort((a, b) => a.x - b.x)[0]
+      if (!next) return false
+      if (PAGE_NO.test(next.str)) return true
+      if (!/^[.…·\s]+$/.test(next.str)) return false
+      tok = next
+      x2 = next.xr
+    }
+    return false
   }
 
   // ---- typed runs ---------------------------------------------------------
@@ -1506,7 +1544,7 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
   // to …… / Date …/…/…") is filled in by the document centre when it issues
   // a copy, not by the tech — and on most covers it sits hidden under the
   // red "Temporary amendments may apply" banner.
-  const stamp = texts.find((t) => /controlled copy number/i.test(t.str))
+  const stamp = texts.find((t) => /controlled\s*copy/i.test(t.str))
   if (!stamp) return out
   const inStamp = (f) => {
     const x = f.xPct * pw, y = f.yPct * ph
@@ -1664,7 +1702,8 @@ export function answerChoices(text) {
   const parts = t.replace(/\bn\s*\/\s*a\b/gi, '\u0000').split(/\s*\/\s*/)
     .map((p) => p.replace(/\u0000/g, 'N/A').trim())
   if (parts.length < 2 || parts.length > 4) return null
-  if (parts.some((p) => p.length > 18 || !/^[A-Za-z][A-Za-z /]*$/.test(p))) return null
+  // (a later option may name a form: "Yes / F104 Required")
+  if (parts.some((p) => p.length > 18 || !/^[A-Za-z][A-Za-z0-9 /]*$/.test(p))) return null
   // led by an answer: "Verified Yes/No" is the end of a heading
   return ANSWER_WORD.test(parts[0]) ? parts : null
 }

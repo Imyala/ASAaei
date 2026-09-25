@@ -824,11 +824,36 @@ console.log('a choice on a line of its own inside a bigger cell')
   ok(remote && remote.label === 'Remote' && remote.options.join() === 'OK,Work required', `a labelled choice wrapped over three lines (got ${remote && remote.options.join('/')})`)
 }
 
+console.log('a choice in a table carried over from the page before')
+{
+  // the checklist's heading row is on the previous page; here the last
+  // rows: | G.8 readings | W ___ | ... | G.9 task | Yes / F104 Required |
+  ok(answerChoices('Yes / F104 Required')?.join() === 'Yes,F104 Required', 'an option can name a form')
+  const cells = [{ x: 60, y: 98, w: 42, h: 55 }, { x: 102, y: 98, w: 234, h: 27 }, { x: 336, y: 98, w: 57, h: 27 }, { x: 393, y: 98, w: 149, h: 27 },
+    { x: 102, y: 125, w: 234, h: 28 }, { x: 336, y: 125, w: 57, h: 28 }, { x: 393, y: 125, w: 149, h: 28 },
+    { x: 60, y: 153, w: 42, h: 46 }, { x: 102, y: 153, w: 234, h: 46 }, { x: 336, y: 153, w: 57, h: 46 }, { x: 393, y: 153, w: 149, h: 46 }]
+  const texts = [T('G.8', 63, 80, 110, 8), T('Record EDH current (s) for each phase', 105, 300, 110, 8),
+    T('G.9', 63, 80, 165, 8), T('Confirm the EDH is listed correctly in SAP', 105, 320, 165, 8),
+    T('Yes / F104', 339, 381, 168, 9), T('Required', 339, 377, 180, 9)]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  const tap = fields.find((f) => f.type === 'status' && f.yPct * PH > 150)
+  ok(tap && tap.options.join() === 'Yes,F104 Required' && tap.covers, `the printed answers tap through (got ${tap && tap.options.join('/')})`)
+}
+
 console.log('a table of contents is not a page of write-on lines')
 {
   const texts = [T('1', 54, 60, 106, 10), T('Purpose', 119, 160, 106, 10), T('.'.repeat(120), 160, 529, 106, 10), T('5', 530, 536, 106, 10),
     T('Appendix G Test sheets ........................ 56', 54, 536, 126, 10)]
   ok(blankLineFields(texts, [], [], 595, 842, 0).length === 0, 'no box on a leader to a page number')
+  // the leader printed as several tokens of dots before the number
+  const split = [T('Scope', 119, 150, 126, 10), T('.'.repeat(32), 151, 239, 126, 10), T('.'.repeat(32), 239, 327, 126, 10),
+    T('.'.repeat(32), 327, 415, 126, 10), T('.'.repeat(6), 415, 431, 126, 10), T('6', 432, 438, 126, 10)]
+  ok(blankLineFields(split, [], [], 595, 842, 0).length === 0, 'nor on a leader split into several runs of dots')
+  // the cover's copy stamp is the document centre's, even set with a stray
+  // space ("Numbe r")
+  const cover = [T('Controlled Copy Numbe r ..................', 200, 420, 740, 9), T('Issued to ..................................', 200, 420, 752, 9),
+    T('Date ....../....../......', 200, 320, 764, 9)]
+  ok(blankLineFields(cover, [], [], 595, 842, 0).length === 0, 'no box on the controlled-copy stamp')
   const form = [T('Date: ....../....../......', 54, 200, 106, 10), T('R.........A', 300, 340, 106, 10)]
   ok(blankLineFields(form, [], [], 595, 842, 0).length === 4, 'a date line and a reading between letters still get boxes')
 }
