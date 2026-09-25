@@ -1017,8 +1017,8 @@ function statusCycleFor(heading) {
   return /pass/i.test(heading || '') ? ['Pass', 'N/A', 'Fail'] : []
 }
 
-// What a printed tick box taps through: a tick, and back to empty.
-export const TICK_OPTIONS = ['✓']
+// What a printed tick box taps through: a tick, a cross, and back to empty.
+export const TICK_OPTIONS = ['✓', '✗']
 
 // The two choices of a cell printed "Done/Not Done", "Required/Not Required"
 // — a thing and its negation — or null. ("OK/Not OK" is a column heading.)

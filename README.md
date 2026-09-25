@@ -326,7 +326,7 @@ npm test                 # unit tests
   through 1–5; signature next to a "Signature" label). Shaded (grey) rows and columns keep their
   boxes, and so do rows whose task text carries a link, and rows carried over the top of a page
   above a repeated header. Every printed tick box "☐" — alone in a cell, or inline as in
-  "☐ Yes ☐ No" — is a box you tap to tick. A cell printed "Done/Not Done" taps through those two,
+  "☐ Yes ☐ No" — is a box you tap: tick ✓, then cross ✗, then clear. A cell printed "Done/Not Done" taps through those two,
   a "Yes/No" column taps Yes / No / N/A, a cell holding only its unit ("V", "[A]", "Sec") gets a
   box before the unit, and a prompt printed inside a cell ("Record water added", "Comments:")
   gets a box beside or under it. Grey section-heading rows and the blank starts of carried-over
@@ -341,6 +341,11 @@ npm test                 # unit tests
 - **Tap OK / Fail / N/A:** status cells are a single tap-cycle — blank → **OK** → **N/A** →
   **Fail** → blank — so a whole column is a few taps, no dropdowns. A column headed *Pass/Fail*
   taps through **Pass / N/A / Fail** instead, matching the form's own wording.
+- **Drop a tick or a cross anywhere:** drag the ✓ or ✗ from the toolbar onto any spot on a page.
+  Or tap one, then tap the page as many times as you like (easier on a tablet); tap it again, or
+  *Done*, to stop. A dropped mark can be dragged to move it; tap it and press × to remove it.
+  Marks are part of the filled-in form, not the form's layout, so they are not kept between
+  visits the way edited boxes are.
 - **Type on all pages:** the toolbar button turns every tap-cell in the document into a box to
   type in (and back again). Each page still has its own *123 Manual entry* switch for one page
   at a time.

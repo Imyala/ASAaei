@@ -707,6 +707,7 @@ console.log('tick boxes printed inline are tickable, each on its own')
   const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
   const ticks = fields.filter((f) => f.options.join() === TICK_OPTIONS.join())
   ok(ticks.length === 3, `each printed ☐ becomes a tick box (got ${ticks.length})`)
+  ok(TICK_OPTIONS.join() === '✓,✗', 'a tick box taps tick, then cross, then clear')
   ok(ticks.some((f) => f.label === 'Yes') && ticks.some((f) => f.label === 'No'), `labelled by the word beside it (got ${ticks.map((f) => f.label).join(', ')})`)
   ok(ticks.every((f) => f.covers && f.wPct * PW < 14), 'each is the size of the printed square and clears it on download')
 }

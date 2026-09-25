@@ -39,7 +39,11 @@ function layoutOf(f) {
 
 // What the tech changed: `base` is the detected fields as the document
 // opened (before any saved edits), `current` the fields now.
-export function diffBoxEdits(base, current, pageCount) {
+//
+// A tick or cross dropped on the page is an answer, not a box, so it is not
+// part of the form's layout.
+export function diffBoxEdits(base, allCurrent, pageCount) {
+  const current = allCurrent.filter((f) => f.type !== 'mark')
   const now = new Map(current.map((f) => [f.id, f]))
   const before = new Map(base.map((f) => [f.id, f]))
   const removed = []

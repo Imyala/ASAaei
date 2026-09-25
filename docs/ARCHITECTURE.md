@@ -68,8 +68,10 @@ places on a page:
   ("Voltage (R): Volts", "Actual Reading"), in which case it is typed. A "Grading (1-5)" column
   taps through its scale.
 - **Tick boxes and units** — a cell holding only "☐" becomes a tick box, and so does every "☐"
-  printed inline ("☐ Yes ☐ No", "☐ JSA Completed …"), sized to the printed square; a tap ticks,
-  another clears, and the download draws the tick over the cleared box. A cell holding only a
+  printed inline ("☐ Yes ☐ No", "☐ JSA Completed …"), sized to the printed square; taps go tick,
+  cross, clear, and the download draws the tick or cross (as strokes — the standard PDF fonts
+  have neither glyph) over the cleared box. Ticks and crosses dragged from the toolbar onto any
+  spot are `mark` fields: drawn the same way, and left out of the saved hand edits. A cell holding only a
   right-aligned unit ("V", "[A]", "Sec") gets a typing box in the space before it; a cell
   printed "Done/Not Done" (a thing and its negation) taps through those two.
 - **Gaps in text columns** — an empty cell in a column that is otherwise printed text, with

@@ -21,10 +21,10 @@ const BUILD_ID = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev'
 const ADD_KINDS = {
   text: { label: 'Text box', size: { w: 0.2, h: 0.022 }, make: () => ({ type: 'text', options: [], label: 'Text' }) },
   status: { label: 'OK / N/A / Fail', size: { w: 0.07, h: 0.022 }, make: () => ({ type: 'status', options: [], label: 'Result' }) },
-  tick: { label: 'Tick ✓', size: { w: 0.022, h: 0 }, make: () => ({ type: 'status', options: ['✓'], label: 'Tick', covers: true }) },
+  tick: { label: 'Tick ✓ ✗', size: { w: 0.022, h: 0 }, make: () => ({ type: 'status', options: ['✓', '✗'], label: 'Tick', covers: true }) },
   signature: { label: 'Signature', size: { w: 0.26, h: 0.06 }, make: () => ({ type: 'signature', options: [], label: 'Signature' }) },
 }
-const kindOf = (f) => (f.type === 'status' ? (f.options?.length === 1 && f.options[0] === '✓' ? 'tick' : 'status') : f.type)
+const kindOf = (f) => (f.type === 'status' ? (f.options?.[0] === '✓' ? 'tick' : 'status') : f.type)
 // What the "open a document" file pickers accept. Legacy .doc is included
 // because the LibreOffice converter reads it; without a converter running the
 // open path explains that rather than failing obscurely.
@@ -37,7 +37,9 @@ const DOC_ACCEPT = '.pdf,.docx,.doc,application/pdf,'
 // taps through Pass / N/A / Fail — so the value written onto the form is the
 // one the form itself asks for. No options means this default.
 const STATUS_CYCLE = ['', 'OK', 'N/A', 'Fail']
-const cycleFor = (f) => (f?.options?.length ? ['', ...f.options] : STATUS_CYCLE)
+// A tick box: tick, cross, clear.
+const TICK_CYCLE = ['', '✓', '✗']
+const cycleFor = (f) => (isTickField(f) ? TICK_CYCLE : f?.options?.length ? ['', ...f.options] : STATUS_CYCLE)
 const nextStatus = (v, cycle = STATUS_CYCLE) =>
   cycle[(cycle.indexOf(v) + 1) % cycle.length]
 // CSS class for a status value: 'OK'/'Pass' read as good, 'Fail' as bad.
@@ -45,12 +47,25 @@ const statusClass = (v) => {
   if (!v) return 'blank'
   const s = String(v)
   if (/^(ok|pass|yes|done|✓)$/i.test(s)) return 'OK'
-  if (/^(fail|no|not .+)$/i.test(s)) return 'Fail'
+  if (/^(fail|no|not .+|✗)$/i.test(s)) return 'Fail'
   if (/^\d+$/.test(s)) return 'val' // a grade on a printed scale
   return 'NA'
 }
-// A printed tick box ("☐") taps between a tick and empty.
-const isTickField = (f) => f?.options?.length === 1 && f.options[0] === '✓'
+// A printed tick box ("☐") taps tick → cross → clear.
+function isTickField(f) { return f?.type === 'status' && f.options?.[0] === '✓' }
+
+// A tick or a cross dropped anywhere on a page from the toolbar: its size as
+// a share of the page's width (about a line of type high on A4).
+const MARK_W = 0.032
+const MARKS = { '✓': 'Tick', '✗': 'Cross' }
+function MarkGlyph({ mark }) {
+  return (
+    <svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor"
+      strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {mark === '✗' ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4.5 12.5l5 5L20 6.5" />}
+    </svg>
+  )
+}
 
 let idCounter = 1
 const nextId = () => `f${idCounter++}`
@@ -95,6 +110,10 @@ export default function App() {
   // Whether boxes this tech added or removed on an earlier visit were put
   // back when this form opened.
   const [editsApplied, setEditsApplied] = useState(false)
+  // Dropping ticks and crosses: the mark chosen to tap onto the page ('' when
+  // none), and the mark being dragged from the toolbar with where it is.
+  const [armedMark, setArmedMark] = useState('')
+  const [markDrag, setMarkDrag] = useState(null) // { mark, x, y, moved }
   const [busy, setBusy] = useState('')
   const [docKey, setDocKey] = useState('')
   const [docTitle, setDocTitle] = useState('')
@@ -417,7 +436,13 @@ export default function App() {
   // tap. Tap a box to select it, drag it to move it, drag its corner to size
   // it, and × to delete it.
   const onPageClick = async (e, pageIndex) => {
-    if (mode !== 'design') return
+    if (mode !== 'design') {
+      // A tick or cross chosen in the toolbar goes where the page is tapped;
+      // otherwise a tap on the page lets go of a selected mark.
+      if (armedMark) placeMark(pageIndex, e.currentTarget, e.clientX, e.clientY, armedMark)
+      else setSelectedId(null)
+      return
+    }
     const rect = e.currentTarget.getBoundingClientRect()
     const fx = (e.clientX - rect.left) / rect.width
     const fy = (e.clientY - rect.top) / rect.height
@@ -443,6 +468,62 @@ export default function App() {
     setFields((fs) => [...fs, field])
     setSelectedId(field.id)
   }
+  // Put a tick or a cross on a page, centred where it was dropped or tapped.
+  const placeMark = (pageIndex, pageEl, clientX, clientY, mark) => {
+    const rect = pageEl.getBoundingClientRect()
+    const w = MARK_W
+    const h = w * (rect.width / rect.height)
+    const fx = (clientX - rect.left) / rect.width
+    const fy = (clientY - rect.top) / rect.height
+    const field = {
+      id: nextId(), type: 'mark', page: pageIndex, options: [], value: mark, label: MARKS[mark] || 'Mark',
+      xPct: clamp(fx - w / 2, 0, 1 - w), yPct: clamp(fy - h / 2, 0, 1 - h), wPct: w, hPct: h,
+    }
+    setFields((fs) => [...fs, field])
+    setSelectedId(field.id)
+  }
+  const placeMarkRef = useRef(placeMark)
+  placeMarkRef.current = placeMark
+  // Drag a ✓ or ✗ from the toolbar and let go over a page. A tap without a
+  // drag chooses it instead, and each tap on the page then places one — the
+  // easier way on a tablet — until the chip is tapped again.
+  const markDragRef = useRef(null) // { mark, sx, sy, moved }
+  const onMarkChipDown = (e, mark) => {
+    e.preventDefault()
+    markDragRef.current = { mark, sx: e.clientX, sy: e.clientY, moved: false }
+  }
+  useEffect(() => {
+    const move = (e) => {
+      const d = markDragRef.current
+      if (!d) return
+      if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 6) d.moved = true
+      if (d.moved) setMarkDrag({ mark: d.mark, x: e.clientX, y: e.clientY })
+    }
+    const up = (e) => {
+      const d = markDragRef.current
+      markDragRef.current = null
+      setMarkDrag(null)
+      if (!d) return
+      if (!d.moved) { setArmedMark((m) => (m === d.mark ? '' : d.mark)); return }
+      const pageEl = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-page]')
+      if (pageEl) placeMarkRef.current(Number(pageEl.dataset.page), pageEl, e.clientX, e.clientY, d.mark)
+    }
+    const cancel = () => { markDragRef.current = null; setMarkDrag(null) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+    }
+  }, [])
+  useEffect(() => {
+    if (!armedMark) return undefined
+    const onKey = (e) => { if (e.key === 'Escape') setArmedMark('') }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [armedMark])
   const updateField = (id, patch) =>
     setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)))
   const deleteField = (id) => {
@@ -477,14 +558,16 @@ export default function App() {
     if (!window.confirm('Put the boxes back the way they were detected? Boxes you added are removed and boxes you deleted come back.')) return
     const values = new Map(fields.map((f) => [f.id, f.value]))
     const restored = baseFieldsRef.current.map((f) => (values.has(f.id) ? { ...f, value: values.get(f.id) } : f))
-    setFields(applyProfile(restored, getProfile()))
+    const marks = fields.filter((f) => f.type === 'mark')
+    setFields([...applyProfile(restored, getProfile()), ...marks])
     clearBoxEdits(editKeyRef.current).catch(() => {})
     setEditsApplied(false)
     setSelectedId(null)
   }
   // Delete / Backspace removes the selected box while editing (keyboards).
   useEffect(() => {
-    if (mode !== 'design' || !selectedId) return
+    if (!selectedId) return
+    if (mode !== 'design' && fields.find((f) => f.id === selectedId)?.type !== 'mark') return
     const onKey = (e) => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       if (/^(input|textarea|select)$/i.test(e.target?.tagName || '')) return
@@ -493,12 +576,13 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, selectedId, fields]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drag to move, or drag the corner handle to size (pointer events, so it
   // works with touch). The grab point stays under the finger.
   const onFieldPointerDown = (e, field, pageEl, how = 'move') => {
-    if (mode !== 'design' || !pageEl) return
+    // Boxes move while editing; a dropped tick or cross moves any time.
+    if ((mode !== 'design' && field.type !== 'mark') || !pageEl) return
     e.stopPropagation()
     setSelectedId(field.id)
     const rect = pageEl.getBoundingClientRect()
@@ -971,6 +1055,19 @@ export default function App() {
         </div>
 
         <div className="group right">
+          {mode !== 'design' && (
+            <div className="markchips" role="group" aria-label="Drop a tick or a cross anywhere">
+              <span className="markchips-label">Drag onto page</span>
+              {Object.entries(MARKS).map(([mark, name]) => (
+                <button key={mark} type="button" className={'markchip ' + (mark === '✗' ? 'cross' : 'tick') + (armedMark === mark ? ' on' : '')}
+                  aria-pressed={armedMark === mark} aria-label={`${name}: drag onto the page, or tap then tap the page`}
+                  title={`Drag a ${name.toLowerCase()} onto the page — or tap here, then tap the page`}
+                  onPointerDown={(e) => onMarkChipDown(e, mark)}>
+                  <MarkGlyph mark={mark} />
+                </button>
+              ))}
+            </div>
+          )}
           <button className={'editboxes' + (mode === 'design' ? ' on' : '')}
             onClick={mode === 'design' ? stopEditing : startEditing} aria-pressed={mode === 'design'}
             title={mode === 'design' ? 'Finish adding and removing boxes' : 'Add boxes, move them, or remove them'}>
@@ -1006,6 +1103,19 @@ export default function App() {
       </header>
 
       {busy && <div className="busy">{busy}</div>}
+      {armedMark && mode !== 'design' && (
+        <div className="hintbar markbar">
+          Tap the page to put a {MARKS[armedMark].toLowerCase()} there — as many as you like.
+          Drag one to move it; tap it and press × to remove it.
+          <button className="inlinelink" onClick={() => setArmedMark('')}>Done</button>
+        </div>
+      )}
+      {markDrag && (
+        <div className={'markghost ' + (markDrag.mark === '✗' ? 'cross' : 'tick')} aria-hidden="true"
+          style={{ left: markDrag.x, top: markDrag.y }}>
+          <MarkGlyph mark={markDrag.mark} />
+        </div>
+      )}
       {updateReady && (
         <div className="updatebar">
           A new version of the app is ready — it loads when you go back to Home.
@@ -1026,7 +1136,7 @@ export default function App() {
             <>
               <span className="editbar-sep" aria-hidden="true" />
               <span className="editbar-sel">Selected: <b>{selected.label || ADD_KINDS[kindOf(selected)]?.label}</b></span>
-              {selected.type !== 'signature' && (
+              {selected.type !== 'signature' && selected.type !== 'mark' && (
                 <div className="seg">
                   {['text', 'status', 'tick'].map((k) => (
                     <button key={k} className={kindOf(selected) === k ? 'on' : ''} onClick={() => retypeField(selected, k)}>{ADD_KINDS[k].label}</button>
@@ -1121,7 +1231,7 @@ export default function App() {
         <div className="pagescroll" onScroll={onStageScroll}>
           {orderedSelection().map((i) => { const pg = pages[i]; return pg ? (
             <div key={i} className="pagewrap">
-              <div className={'page' + (mode === 'design' ? ' editing' : '')} data-page={i} onClick={(e) => onPageClick(e, i)}
+              <div className={'page' + (mode === 'design' ? ' editing' : '') + (armedMark && mode !== 'design' ? ' placing' : '')} data-page={i} onClick={(e) => onPageClick(e, i)}
                 style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}>
                 {pg.src
                   ? <img src={pg.src} alt={`Page ${i + 1}`} draggable={false} />
@@ -1223,7 +1333,8 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, man
 
   if (mode === 'design') {
     const kind = kindOf(f)
-    const shown = kind === 'tick' ? (f.value || '')
+    const shown = kind === 'mark' ? f.value
+      : kind === 'tick' ? (f.value || '')
       : kind === 'status' ? (f.value || (f.options?.length ? f.options.join(' / ') : 'OK / N/A / Fail'))
         : kind === 'signature' ? '✎ Signature'
           : (f.value || f.label || 'Text')
@@ -1240,6 +1351,22 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, man
             <span className="fx-resize" aria-hidden="true"
               onPointerDown={(e) => { e.stopPropagation(); onResizeDown?.(e) }} />
           </>
+        )}
+      </div>
+    )
+  }
+  // A tick or cross dropped on the page: drawn over the page, dragged to
+  // move, and removed with × once tapped.
+  if (f.type === 'mark') {
+    return (
+      <div className={`${cls} mark ${f.value === '✗' ? 'cross' : 'tick'} movable`} style={style} title={f.label}
+        onClick={(e) => { e.stopPropagation(); onSelect() }}
+        onPointerDown={readOnly ? undefined : onPointerDown}>
+        <MarkGlyph mark={f.value} />
+        {selected && !readOnly && (
+          <button type="button" className="fx-del" aria-label={`Remove this ${String(f.label || 'mark').toLowerCase()}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDelete?.() }}>×</button>
         )}
       </div>
     )
@@ -1274,11 +1401,11 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, man
         ) : (
           <button className={'statuscell ' + statusClass(f.value) + (isTickField(f) ? ' tick' : '')}
             disabled={readOnly}
-            title={isTickField(f) ? `${f.label || 'Tick'} — tap to tick or untick`
+            title={isTickField(f) ? `${f.label || 'Tick'} — tap: tick, cross, clear`
               : 'Tap: ' + cycleFor(f).filter(Boolean).join(' → ') + ' → blank'}
-            aria-pressed={isTickField(f) ? !!f.value : undefined}
+            aria-label={isTickField(f) ? `${f.label || 'Tick box'}: ${f.value === '✓' ? 'ticked' : f.value === '✗' ? 'crossed' : 'empty'}` : undefined}
             onClick={() => onChange({ value: nextStatus(f.value, cycleFor(f)) })}>
-            {f.value || (isTickField(f) ? '' : '–')}
+            {isTickField(f) ? (f.value ? <MarkGlyph mark={f.value} /> : '') : (f.value || '–')}
           </button>
         )
       )}

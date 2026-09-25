@@ -59,13 +59,27 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
         default: return [px, uh - py]
       }
     }
+    // A tick or cross of side `size`, centred in the box, as two strokes.
+    const drawMark = (mark, bx, by, bw, bh, size) => {
+      const ox = bx + (bw - size) / 2, oy = by + (bh - size) / 2
+      const at = ([px, py]) => { const [x, y] = toUser(ox + px * size, oy + py * size); return { x, y } }
+      const strokes = mark === '✗'
+        ? [[[0.15, 0.15], [0.85, 0.85]], [[0.85, 0.15], [0.15, 0.85]]]
+        : [[[0.12, 0.55], [0.4, 0.85]], [[0.4, 0.85], [0.9, 0.15]]]
+      const color = mark === '✗' ? rgb(0.75, 0.12, 0.12) : rgb(0.1, 0.45, 0.2)
+      const thickness = Math.max(0.9, size * 0.14)
+      for (const [a, b] of strokes) page.drawLine({ start: at(a), end: at(b), thickness, color })
+    }
     // Draw text whose displayed baseline starts at viewport point (dx, dy).
     const drawText = (value, dx, dy, size, useFont, color) => {
       const [ux, uy] = toUser(dx, dy)
       page.drawText(value, { x: ux, y: uy, size, font: useFont, color, rotate })
     }
 
-    if (f.type === 'text' || f.type === 'dropdown') {
+    if (f.type === 'mark') {
+      // A tick or cross dropped on the page, drawn where it was put.
+      if (f.value === '✓' || f.value === '✗') drawMark(f.value, vx, vy, fw, fh, Math.min(fw, fh) * 0.9)
+    } else if (f.type === 'text' || f.type === 'dropdown') {
       const value = safe(String(f.value ?? ''))
       if (!value) continue
       // The value stays inside its box: a long entry wraps onto more lines
@@ -89,15 +103,10 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
         const [rx, ry] = toUser(vx, vy + fh)
         page.drawRectangle({ x: rx, y: ry, width: fw, height: fh, rotate, color: rgb(1, 1, 1) })
       }
-      // A tick is drawn, not typed: the standard fonts have no "✓".
-      if (raw === '✓') {
-        const s = Math.min(fw * 0.8, fh * 0.8, 13)
-        const ox = vx + (fw - s) / 2, oy = vy + (fh - s) / 2
-        const pts = [[0.12, 0.55], [0.4, 0.85], [0.9, 0.15]].map(([px, py]) => toUser(ox + px * s, oy + py * s))
-        const thickness = Math.max(0.9, s * 0.14)
-        const color = rgb(0.1, 0.45, 0.2)
-        page.drawLine({ start: { x: pts[0][0], y: pts[0][1] }, end: { x: pts[1][0], y: pts[1][1] }, thickness, color })
-        page.drawLine({ start: { x: pts[1][0], y: pts[1][1] }, end: { x: pts[2][0], y: pts[2][1] }, thickness, color })
+      // A tick or a cross is drawn, not typed: the standard fonts have no
+      // "✓" or "✗".
+      if (raw === '✓' || raw === '✗') {
+        drawMark(raw, vx, vy, fw, fh, Math.min(fw * 0.8, fh * 0.8, 13))
         continue
       }
       const value = safe(raw)

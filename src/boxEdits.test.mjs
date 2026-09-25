@@ -32,6 +32,14 @@ test('edits re-apply to fresh detection, and only to the same document', () => {
   assert.equal(applyBoxEdits(fresh, edits, 4, () => 'z').applied, false, 'another page count: left alone')
 })
 
+test('ticks and crosses dropped on the page are answers, not layout', () => {
+  const base = [box('a', 0, 0.1, 0.1)]
+  const current = [base[0], { ...box('m', 0, 0.5, 0.5, 0.03, 0.02, 'mark'), value: '✓' }]
+  const d = diffBoxEdits(base, current, 1)
+  assert.equal(d.added.length, 0)
+  assert.equal(d.removed.length, 0)
+})
+
 test('sameBox tells the same box from a neighbour', () => {
   assert.ok(sameBox(box('a', 0, 0.1, 0.1), box('b', 0, 0.101, 0.1)))
   assert.ok(!sameBox(box('a', 0, 0.1, 0.1), box('b', 0, 0.16, 0.1)), 'the next cell along')
