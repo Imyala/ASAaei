@@ -346,9 +346,13 @@ npm test                 # unit tests
   *Done*, to stop. A dropped mark can be dragged to move it; tap it and press × to remove it.
   Marks are part of the filled-in form, not the form's layout, so they are not kept between
   visits the way edited boxes are.
-- **Type on all pages:** the toolbar button turns every tap-cell in the document into a box to
-  type in (and back again). Each page still has its own *123 Manual entry* switch for one page
-  at a time.
+- **Boxes: Auto · Type · ✓ ✗ · OK · N/A · Fail:** the toolbar switch sets how every tap box in
+  the document answers. *Auto* is each box as the form asks (printed "☐" boxes tick, result
+  cells tap OK / N/A / Fail or their column's own wording); *Type* turns them all into boxes to
+  type in; *✓ ✗* makes them all tap tick, cross, clear; *OK · N/A · Fail* makes them all tap OK,
+  N/A, Fail. Answers already given follow the switch — a tick becomes OK, a cross Fail, and
+  back — and one with no counterpart (N/A as a tick, a typed figure) is kept as it is. Each page
+  has its own *This page* switch, top left, to set that page differently.
 - **Edit boxes:** add, move, resize and delete boxes yourself. Choose *Text box*, *OK / N/A /
   Fail*, *Tick ✓* or *Signature* and tap the page: the box snaps to the ruled cell you tapped
   (off the grid it lands where you tapped). Tap a box to select it, drag it to move it, drag its

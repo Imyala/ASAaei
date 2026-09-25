@@ -8,6 +8,7 @@ import { diffBoxEdits, applyBoxEdits, hasBoxEdits, sameBox } from './boxEdits.js
 import { getProfile, setProfile, applyProfile } from './profile.js'
 import Settings from './Settings.jsx'
 import Mark from './Mark.jsx'
+import { TICK_CYCLE, cycleFor, nextStatus, carryValue } from './answers.js'
 import { discoverConverter, getConverterSettings, lastConverterStatus } from './converter.js'
 import { wasmAvailable, deviceEngineEnabled, isolationProblem, STALL_LIMIT_MS, ENGINE_CACHE } from './wasmConverter.js'
 
@@ -31,17 +32,16 @@ const kindOf = (f) => (f.type === 'status' ? (f.options?.[0] === '✓' ? 'tick' 
 const DOC_ACCEPT = '.pdf,.docx,.doc,application/pdf,'
   + 'application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword'
 
-// Tri-state tap control: blank → OK → N/A → Fail → blank.
-//
-// A field may carry its own wording in `options` — a column headed "Pass/Fail"
-// taps through Pass / N/A / Fail — so the value written onto the form is the
-// one the form itself asks for. No options means this default.
-const STATUS_CYCLE = ['', 'OK', 'N/A', 'Fail']
-// A tick box: tick, cross, clear.
-const TICK_CYCLE = ['', '✓', '✗']
-const cycleFor = (f) => (isTickField(f) ? TICK_CYCLE : f?.options?.length ? ['', ...f.options] : STATUS_CYCLE)
-const nextStatus = (v, cycle = STATUS_CYCLE) =>
-  cycle[(cycle.indexOf(v) + 1) % cycle.length]
+// How the tap boxes on a page answer (see answers.js). Auto is each box as
+// the form asks — a printed "☐" ticks, a result cell taps OK / N/A / Fail or
+// its column's own wording; the others make every tap box on the page answer
+// the one way.
+const BOX_MODES = [
+  { key: '', menu: 'Auto', title: 'Each box as the form asks: printed boxes tick, result cells tap OK / N/A / Fail' },
+  { key: 'type', menu: '123 Type', title: 'Type into every box' },
+  { key: 'tick', menu: '✓ ✗ Tick or cross', title: 'Every box taps tick, cross, clear' },
+  { key: 'status', menu: 'OK / N/A / Fail', title: 'Every box taps OK, N/A, Fail, clear' },
+]
 // CSS class for a status value: 'OK'/'Pass' read as good, 'Fail' as bad.
 const statusClass = (v) => {
   if (!v) return 'blank'
@@ -51,8 +51,6 @@ const statusClass = (v) => {
   if (/^\d+$/.test(s)) return 'val' // a grade on a printed scale
   return 'NA'
 }
-// A printed tick box ("☐") taps tick → cross → clear.
-function isTickField(f) { return f?.type === 'status' && f.options?.[0] === '✓' }
 
 // A tick or a cross dropped anywhere on a page from the toolbar: its size as
 // a share of the page's width (about a line of type high on A4).
@@ -121,7 +119,10 @@ export default function App() {
   const [selectedPages, setSelectedPages] = useState(new Set()) // page indices to fill
   const [pageOrder, setPageOrder] = useState([]) // original page indices in display order
   const [showPages, setShowPages] = useState(false)
-  const [manualPages, setManualPages] = useState(new Set()) // pages where status cells are typed, not tapped
+  // How the tap boxes answer (BOX_MODES): on every page, and on any page set
+  // its own way (page index -> mode).
+  const [boxMode, setBoxMode] = useState('')
+  const [pageModes, setPageModes] = useState({})
   const [profile, setProfileState] = useState(getProfile())
   // What the "check for update" link last said: '' | a short message.
   const [updateNote, setUpdateNote] = useState('')
@@ -236,7 +237,8 @@ export default function App() {
       : allIdx
     setSelectedPages(new Set(sel.length ? sel : allIdx))
     setShowPages(false)
-    setManualPages(new Set())
+    setBoxMode('')
+    setPageModes({})
     setSelectedId(null)
     setTool('text')
     setScreen('editor')
@@ -783,20 +785,36 @@ export default function App() {
     window.addEventListener('pointerup', up)
     return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
   }, [])
-  const togglePageManual = (i) => setManualPages((prev) => {
-    const next = new Set(prev)
-    next.has(i) ? next.delete(i) : next.add(i)
-    return next
-  })
-  // The pages that have tap-cells at all, and whether every one of them is
-  // set to typing — which is what the toolbar's "Type on all pages" shows.
-  const tapPages = [...new Set(fields.filter((f) => f.type === 'status').map((f) => f.page))]
-  const typingEverywhere = tapPages.length > 0 && tapPages.every((p) => manualPages.has(p))
-  // One switch for the whole document: every OK / N/A / Fail cell on every
-  // page becomes a box to type in (or all go back to tapping). The per-page
-  // switch still overrides it one page at a time.
-  const toggleTypingEverywhere = () =>
-    setManualPages(typingEverywhere ? new Set() : new Set(tapPages))
+  // Whether the document has tap boxes at all — the toolbar's "Boxes" switch
+  // is only shown when it does.
+  const hasTapBoxes = fields.some((f) => f.type === 'status')
+  const modeOfPage = (i) => pageModes[i] ?? boxMode
+  // Answers already given follow a switch between ticks and OK / N/A / Fail;
+  // typing keeps each one as it is.
+  const carryAnswers = (onPage, to) => {
+    if (to === 'type') return
+    setFields((fs) => fs.map((f) => {
+      if (f.type !== 'status' || !onPage(f.page)) return f
+      const value = carryValue(f.value, cycleFor(f, to))
+      return value === f.value ? f : { ...f, value }
+    }))
+  }
+  // One switch for the whole document: every tap box on every page answers
+  // the chosen way. A page's own switch then overrides it for that page.
+  const switchAllBoxes = (to) => {
+    setBoxMode(to)
+    setPageModes({})
+    carryAnswers(() => true, to)
+  }
+  const switchPageBoxes = (i, to) => {
+    setPageModes((prev) => {
+      const next = { ...prev }
+      if (to === boxMode) delete next[i]
+      else next[i] = to
+      return next
+    })
+    carryAnswers((p) => p === i, to)
+  }
   const pagesWithFields = () => new Set(fields.map((f) => f.page))
 
   // ================= OPENING A DOCUMENT =================
@@ -1076,15 +1094,17 @@ export default function App() {
             </svg>
             {mode === 'design' ? 'Done editing' : 'Edit boxes'}
           </button>
-          {tapPages.length > 0 && mode !== 'design' && (
-            <button className={'typeall' + (typingEverywhere ? ' on' : '')} onClick={toggleTypingEverywhere}
-              aria-pressed={typingEverywhere}
-              title={typingEverywhere
-                ? 'Go back to tapping OK / N/A / Fail on every page'
-                : 'Type into every OK / N/A / Fail box, on every page'}>
-              <span className="typeall-key" aria-hidden="true">123</span>
-              {typingEverywhere ? 'Typing on all pages' : 'Type on all pages'}
-            </button>
+          {hasTapBoxes && mode !== 'design' && (
+            <div className="boxmode" role="group" aria-label="How the boxes answer, on every page">
+              <span className="boxmode-label">Boxes</span>
+              {BOX_MODES.map((m) => (
+                <button key={m.key || 'auto'} type="button" className={boxMode === m.key ? 'on' : ''}
+                  aria-pressed={boxMode === m.key} aria-label={`${m.menu}, on every page`}
+                  title={`${m.title}, on every page`} onClick={() => switchAllBoxes(m.key)}>
+                  <BoxModeLabel mode={m.key} />
+                </button>
+              ))}
+            </div>
           )}
           {pages.length > 1 && (
             <button className={showPages ? 'on' : ''} onClick={() => setShowPages((v) => !v)}>
@@ -1237,15 +1257,17 @@ export default function App() {
                   ? <img src={pg.src} alt={`Page ${i + 1}`} draggable={false} />
                   : <div className="pageloading" aria-label={`Page ${i + 1} is still drawing`} />}
                 {mode !== 'design' && fields.some((f) => f.page === i && f.type === 'status') && (
-                  <label className="manualtoggle" title="Type figures instead of tapping OK / N/A / Fail on this page"
+                  <label className={'pagemode' + (modeOfPage(i) ? ' set' : '')} title="How the boxes on this page answer"
                     onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={manualPages.has(i)} onChange={() => togglePageManual(i)} />
-                    123 Manual entry
+                    This page
+                    <select value={modeOfPage(i)} onChange={(e) => switchPageBoxes(i, e.target.value)}>
+                      {BOX_MODES.map((m) => <option key={m.key || 'auto'} value={m.key}>{m.menu}</option>)}
+                    </select>
                   </label>
                 )}
                 {fields.filter((f) => f.page === i).map((f) => (
                   <FieldView key={f.id} field={f} aspect={pg.pxHeight / pg.pxWidth} mode={mode} tool={tool} locked={locked}
-                    selected={f.id === selectedId} manual={manualPages.has(i)} onSelect={() => setSelectedId(f.id)}
+                    selected={f.id === selectedId} boxMode={modeOfPage(i)} onSelect={() => setSelectedId(f.id)}
                     onChange={(patch) => updateField(f.id, patch)} onSign={() => signField(f)}
                     onPointerDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'))}
                     onResizeDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'), 'resize')}
@@ -1317,7 +1339,7 @@ function clamp(v, lo, hi) {
 }
 
 // ---- one field, rendered on the page -------------------------------------
-function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, manual, onSelect, onChange, onSign, onPointerDown, onResizeDown, onDelete }) {
+function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, boxMode = '', onSelect, onChange, onSign, onPointerDown, onResizeDown, onDelete }) {
   // The type is sized from the box itself (a share of its height, in units
   // of the page's width), so a value fits its cell at any zoom — a fixed 13px
   // overflowed the performance test run table's short rows on a phone and
@@ -1389,24 +1411,16 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, man
         </select>
       )}
       {f.type === 'status' && (
-        // When the page is in manual-entry mode, a status cell becomes a plain
-        // text box so figures (readings, measurements) can be typed instead of
-        // tapping OK / N/A / Fail.
+        // On a page set to typing, a tap box becomes a plain text box so
+        // figures (readings, measurements) can be typed instead of tapped.
         // Any keyboard, not the number pad: a typed status is as often "OK",
         // "N/A" or a note as it is a figure.
-        manual ? (
+        boxMode === 'type' ? (
           <input className="ctl" value={String(f.value ?? '')} disabled={readOnly} title={f.label}
             placeholder={f.label && f.label !== 'Result' && hintFits(f) ? f.label : ''}
             onChange={(e) => onChange({ value: e.target.value })} />
         ) : (
-          <button className={'statuscell ' + statusClass(f.value) + (isTickField(f) ? ' tick' : '')}
-            disabled={readOnly}
-            title={isTickField(f) ? `${f.label || 'Tick'} — tap: tick, cross, clear`
-              : 'Tap: ' + cycleFor(f).filter(Boolean).join(' → ') + ' → blank'}
-            aria-label={isTickField(f) ? `${f.label || 'Tick box'}: ${f.value === '✓' ? 'ticked' : f.value === '✗' ? 'crossed' : 'empty'}` : undefined}
-            onClick={() => onChange({ value: nextStatus(f.value, cycleFor(f)) })}>
-            {isTickField(f) ? (f.value ? <MarkGlyph mark={f.value} /> : '') : (f.value || '–')}
-          </button>
+          <StatusCell f={f} boxMode={boxMode} disabled={readOnly} onChange={onChange} />
         )
       )}
       {f.type === 'checkgroup' && (
@@ -1424,4 +1438,35 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, man
       )}
     </div>
   )
+}
+
+// A tap box: each tap moves it on through its cycle, which is the page's way
+// of answering (ticks, or OK / N/A / Fail) or, on Auto, the box's own.
+function StatusCell({ f, boxMode, disabled, onChange }) {
+  const cycle = cycleFor(f, boxMode)
+  const tick = cycle === TICK_CYCLE
+  const v = f.value
+  return (
+    <button className={'statuscell ' + statusClass(v) + (tick ? ' tick' : '')} disabled={disabled}
+      title={tick ? `${f.label || 'Tick'} — tap: tick, cross, clear`
+        : 'Tap: ' + cycle.filter(Boolean).join(' → ') + ' → blank'}
+      aria-label={tick ? `${f.label || 'Tick box'}: ${v === '✓' ? 'ticked' : v === '✗' ? 'crossed' : v || 'empty'}` : undefined}
+      onClick={() => onChange({ value: nextStatus(v, cycle) })}>
+      {v === '✓' || v === '✗' ? <MarkGlyph mark={v} /> : (v || (tick ? '' : '–'))}
+    </button>
+  )
+}
+
+// The face of each "Boxes" choice in the toolbar.
+function BoxModeLabel({ mode }) {
+  if (mode === 'type') return <><span className="typeall-key" aria-hidden="true">123</span>Type</>
+  if (mode === 'tick') {
+    return (
+      <span className="boxmode-marks" aria-hidden="true">
+        <span className="tick"><MarkGlyph mark="✓" /></span><span className="cross"><MarkGlyph mark="✗" /></span>
+      </span>
+    )
+  }
+  if (mode === 'status') return <>OK · N/A · Fail</>
+  return <>Auto</>
 }

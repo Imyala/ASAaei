@@ -71,7 +71,10 @@ places on a page:
   printed inline ("☐ Yes ☐ No", "☐ JSA Completed …"), sized to the printed square; taps go tick,
   cross, clear, and the download draws the tick or cross (as strokes — the standard PDF fonts
   have neither glyph) over the cleared box. Ticks and crosses dragged from the toolbar onto any
-  spot are `mark` fields: drawn the same way, and left out of the saved hand edits. A cell holding only a
+  spot are `mark` fields: drawn the same way, and left out of the saved hand edits. The fill
+  screen's *Boxes* switch (and each page's own) overrides what a tap box does without changing
+  the box: Auto (as detected), typed, ✓ ✗, or OK / N/A / Fail; answers already given are carried
+  across by meaning (`src/answers.js`), so a tick becomes OK and back. A cell holding only a
   right-aligned unit ("V", "[A]", "Sec") gets a typing box in the space before it; a cell
   printed "Done/Not Done" (a thing and its negation) taps through those two.
 - **Gaps in text columns** — an empty cell in a column that is otherwise printed text, with
@@ -191,6 +194,8 @@ get closest-proportion stand-ins and an honest warning.
   - `convert.js` — the conversion routes, shared `DOCX_CSS`, `fileToPdfBytes`
   - `Settings.jsx` — the user's profile, plus converter status and address under *Advanced*
   - `App.jsx` — home screen, the fill editor, page picker, fill layouts
+  - `answers.js` — what each tap box cycles through, and how answers follow a switch between
+    ticks, OK / N/A / Fail and typing
   - `bake.js` — draw field values onto the PDF and flatten
   - `pdfFields.js` / `pdfBoxes.js` / `pdfGrid.js` — PDF field/box detection
   - `pdfRender.js` — progressive page rendering (geometry first, images behind)
