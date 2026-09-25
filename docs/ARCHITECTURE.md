@@ -93,8 +93,38 @@ places on a page:
   the words before the blank, back to the previous blank in the same run of text. A box on a
   drawn rule rises to the top of its label, so it sits level with the words rather than half a
   row below them; a box on a typed line stays inside its table cell. Underscores inside a code
-  ("AD__-ASAC-TMC_-____-AIU___") and the rules under a running header or over a footer are not
-  write-on lines.
+  ("AD__-ASAC-TMC_-____-AIU___", also wrapped over two lines), dots leading to a page number (a
+  table of contents), the rules under a running header or over a footer, a border drawn in the
+  gap between spaced rows, and the cover's controlled-copy stamp are not write-on lines. Short
+  labels stacked with nothing after them ("Site: / Facility: / Date: / Equipment:") are.
+- **Printed answers** — a Result cell printing its choices ("OK / Not OK / NA", "Yes / No",
+  "OK / Work required", in a card "Type | (UG) - (OH)") taps through them over the printed words;
+  it is a question, not a heading, when a task (a clause number or a description) or a card label
+  is beside it. Taken for a heading it made its row a header row, and the row lost its Comments
+  box. The same words on a line of their own inside a bigger cell get a tap on that line.
+- **Readings asked for** — a bracketed unit along a line ("[°C]  [%]") gets a box before it; in a
+  Remarks, Comments, Result or LUL/LPL cell a label ending in a colon gets one beside it, line by
+  line ("Control valve setting:", "Time on load:"), one per unit column where the cell numbers
+  them ("1  2"); "Record here which …" gets the space under it. A figure named in its own
+  sub-cell under a Results heading ("Set-point", "KW") is typed, as is a narrow column headed for
+  a date, a name or an ID, or already written in with values.
+- **Filled-in copies** — an answer already printed in an answer column ("N/A", "OK", a tick
+  picture) gets a tap box over it, marked `printed`: blank, the old answer shows through and stays
+  in the download; a new answer covers it. A column headed "√ / X- N/A" taps tick, cross, N/A.
+- **Read-only tables** — the maintenance schedule ("Maintenance Table *Refer PROC-151 …": Line
+  No, Interval, TechCert, Strategy, Audit…) and its equipment lists get no boxes, found by caption
+  or heading row and followed down their rows; nor do a blank LUL/LPL cell (a limit, where the row
+  has a Result column of its own) or the tail of a row cut by a page break.
+- **Sub-columns and pages** — two blank cells side by side are only joined into one box when no
+  row heads each separately ("0 deg. | 180 deg.", "On Pass/Fail | Off Pass/Fail"). A column that
+  lost its heading on the next page (a partial repeated header, a table's tail) takes the taps of
+  the same column on the page before (`inheritColumnKinds`, allowing for the table sitting a few
+  points left or right); boxes typed because they ask for a reading stay typed.
+- **Paragraph shading** (`src/pdfGeometry.js`) — Word shades a heading's paragraph as a rectangle
+  inset inside the grey cell; its edges fused with the cell's borders and closed a blank "cell"
+  under "Unit No", or split an answer cell into two stacked taps. A filled rectangle inside one
+  of the same colour, evenly inset, is dropped with its edges. A small filled shape of curves or
+  slants (an icon, a tick converted from a picture) counts as a picture.
 
 `npm run inspect-pdf form.pdf` runs the same detection over a PDF on disk and prints the fields
 page by page, which is how a mis-detection is diagnosed without the app.

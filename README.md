@@ -333,7 +333,13 @@ npm test                 # unit tests
   rows get no box. Write-on lines
   get boxes level with their labels: "Fuel start: ____Litres", "Genset:...... Work Order
   Number:......", "Site:" with its line out at a tab stop, "Notes/Remarks:" over rows of dashes.
-  Every box sits inside its own cell. PDFs with embedded form fields use those directly.
+  Every box sits inside its own cell. A Result cell printing its answers ("OK / Not OK / NA",
+  "Yes / No") taps through them; a unit in brackets ("[°C]  [%]") or a label such as "Control
+  valve setting:" in a Remarks cell gets a box for the reading; a "Signature" column takes
+  signatures. The maintenance schedule table, equipment lists, table of contents and the cover's
+  controlled-copy stamp get no boxes. A copy that was already filled in can be answered again:
+  each printed answer (a tick, "N/A", "OK") is a tap box that shows the old answer until a new one
+  replaces it. PDFs with embedded form fields use those directly.
   Detection re-runs on every open, so re-issued versions still fill. To see what the detector
   finds in a PDF without opening the app: `npm run inspect-pdf form.pdf`.
 - **The page number stays put:** a Word document set up with mirrored odd/even footers (page

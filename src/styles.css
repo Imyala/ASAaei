@@ -435,7 +435,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .sigdone b { color: var(--blue); font-size: 13px; line-height: 1.1; white-space: nowrap; }
 .sigdone small { color: #667; font-size: 10px; }
 /* a signature column one line high: name and time side by side */
-.sigdone.oneline { flex-direction: row; align-items: center; gap: 8px; padding: 0 4px; white-space: nowrap; }
+.sigdone.oneline { flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px; padding: 0 4px; white-space: nowrap; }
+.sigdone.oneline b { flex: none; }
+.sigdone.oneline small { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sigdone.oneline b { font-size: clamp(8px, calc(var(--fh) * .6), 12px); }
 .sigdone.oneline small { font-size: clamp(7px, calc(var(--fh) * .5), 10px); }
 
