@@ -1,4 +1,4 @@
-import { isStatusToken, isStatusHeaderToken, isRemarksToken, isReadingLabel, norm } from './fieldClassify.js'
+import { isStatusToken, isStatusHeaderToken, isRemarksToken, isReadingLabel, classifyHeader, norm } from './fieldClassify.js'
 
 // ---------------------------------------------------------------------------
 // Pure grid geometry — build cells from a line grid and turn empty cells into
@@ -505,6 +505,20 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
       .sort((a, b) => b.y - a.y)[0]
     return t ? textIn(t) : ''
   }
+  // The same, reached up the column through cells that touch — so it is
+  // this table's own heading row, not one of a table above ("Notes" lines
+  // and "Parts Used" boxes under a table are not in its columns).
+  const tableTitleOf = (c) => {
+    let at = c
+    for (let n = 0; n < 60; n++) {
+      const up = cells.filter((o) => o !== at && sameCol(o, at) && Math.abs(o.y + o.h - at.y) <= 6)
+        .sort((a, b) => b.w - a.w)[0]
+      if (!up) return ''
+      if (inHeaderRow(up) && textIn(up)) return textIn(up)
+      at = up
+    }
+    return ''
+  }
   // The tail of a row cut by a page break: a row of nothing but blank cells
   // at the top of the page, straight under the heading the table repeats
   // there and straight over a numbered row. What the tech records for that
@@ -601,7 +615,14 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     if (listSlot(c)) continue
     // the row label sits to the left of the cell on the same row — use it as
     // the field label so profile autofill (SAP ID, name, date) still works
-    const rowLabel = rowLabelFor(c)
+    // In a grid of labels and values ("Signature | ____ | Date | ____") the
+    // label is the one just before the cell, not the row's first: F081's
+    // Date box was a signature box labelled "Signature".
+    const before = rowOf(c).filter((o) => o.x + o.w <= c.x + 2 && o.x + o.w >= c.x - 2 && hasText(o))[0]
+    const beforeText = before ? textIn(before) : ''
+    const gridLabel = beforeText && beforeText.length <= 30 && /[A-Za-z]{2}/.test(beforeText) && !BLANK_RUN.test(beforeText)
+      && !/^#\d/.test(beforeText) && /:$|\b(?:site|date|name|signature|sap|order|id|number|no\.?|by|time|hours)\b/i.test(beforeText)
+    const rowLabel = gridLabel ? beforeText.replace(/:$/, '') : rowLabelFor(c)
     const heading = headerFor(c)
     // LUL / LPL print a task's lower and upper limits ("N/A", "3%", "SCD");
     // a blank one is "no limit", not a place to answer, when the row has its
@@ -646,9 +667,28 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     const taskRowTick = !asksForFigure && c.w <= pw * 0.07 && !heading && !titleOf(c)
       && rowOf(c).some((o) => o.x + o.w <= c.x + 2 && textIn(o).length >= 28)
       && rowOf(c).some((o) => o.x >= c.x + c.w - 2 && o.w >= c.w * 2.5 && !hasText(o))
-    let type = namesUnit ? 'text' : statusHeading || ((narrow || taskRowTick) && !asksForFigure) ? 'status' : 'text'
+    // A figure asked for by name beside the box, in a Results column: "RECORD
+    // the TOL rating and set point" with "Set-point", "Phase", "KW", "FLC"
+    // printed in the cell before each box.
+    // (the name is a sub-label: the task itself is further left)
+    // (a cell of its own: not the unit printed after the box before it)
+    const nameLike = !!beforeText && before.w >= 25 && beforeText.length <= 20 && /[A-Za-z]{2}/.test(beforeText)
+      && !answerChoices(beforeText) && !isStatusToken(beforeText) && !CLAUSE_RX.test(beforeText)
+      && !BLANK_RUN.test(beforeText) && !TICK_RX.test(beforeText)
+    const namedFigure = nameLike && /\brecord\b/i.test(rowLabelFor(c))
+      && rowOf(c).some((o) => o !== before && hasText(o) && o.x + o.w <= before.x + 2)
+    // A narrow column headed for a date, a name, an ID or a number is typed
+    // into (the refrigerant record's "Date" and "Staff ID").
+    const textHeading = !statusHeading && classifyHeader(titleOf(c) || heading) === 'text'
+    let type = statusHeading || ((narrow || taskRowTick) && !asksForFigure && !textHeading) ? 'status' : 'text'
+    const figureNamed = type === 'status' && namedFigure
+    if (namesUnit || figureNamed) type = 'text'
 
-    if (type === 'text' && /signature/i.test(rowLabel)) type = 'signature'
+    // A signature: the row says so, or the column is headed for one (the
+    // inventory record's "Signature" column), or it is the sign-off of a
+    // record ("Submitted by", "Approved by").
+    if (type === 'text' && (/signature/i.test(rowLabel) || /^(?:signatures?|signed)$/i.test(norm(titleOf(c) || heading))
+      || /^(?:submitted|approved|signed) by\b/i.test(beforeText))) type = 'signature'
 
     // Label priority: the row's own label ("SAP ID", "Site name") drives both
     // the placeholder and profile autofill, so it wins — unless the column's
@@ -660,8 +700,10 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     // "Entry" is the last resort, not the default.
     const label = type === 'status'
       ? 'Result'
-      : ((isReadingLabel(heading) && !isReadingLabel(rowLabel) ? heading : '')
-        || rowLabel || heading || captionAbove(c) || (type === 'signature' ? 'Signature' : 'Entry'))
+      : type === 'signature' && !/signature/i.test(rowLabel) ? 'Signature'
+        : figureNamed ? beforeText
+          : ((!gridLabel && isReadingLabel(heading) && !isReadingLabel(rowLabel) ? heading : '')
+            || rowLabel || tableTitleOf(c) || heading || captionAbove(c) || (type === 'signature' ? 'Signature' : 'Entry'))
 
     // A status cell carries the wording its own column asks for, so a
     // "Pass/Fail" column cycles Pass → N/A → Fail rather than stamping "OK"
@@ -762,6 +804,12 @@ function promptFields(cells, texts, pw, ph, pageIndex) {
     const next = rightOf(c)
     const nextText = next ? textInside(next, texts) : ''
     if (next && (!nextText || (nextText.length <= 12 && !/:$/.test(nextText)))) continue
+    // "MS Site: | BN-ASAC-ATSC-TMC-AIU": a label whose value is already
+    // written in the cell beside it
+    // (a row of just the two: the log sheet's "Comments:" sits beside the
+    // other half of the sheet, not beside its answer)
+    const pair = cells.filter((o) => o !== c && sameRow(o, c)).length === 1
+    if (pair && next && nextText && !/:$/.test(nextText) && /:$/.test(textInside(c, texts)) && textInside(c, texts).length <= 30) continue
     // The leftmost column of a table describes its rows; with an answer
     // column beside it, it never prompts for an answer inside itself.
     const hasLeft = texts.some((t) => t.xr <= c.x + 2 && t.yTop > c.y && t.yTop < c.y + c.h)

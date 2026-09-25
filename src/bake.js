@@ -133,9 +133,23 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
         x: rx, y: ry, width: fw, height: fh, rotate,
         borderColor: rgb(0.16, 0.22, 0.45), borderWidth: 1, color: rgb(0.96, 0.97, 1),
       })
-      const nameSize = Math.max(9, Math.min(13, fh * 0.32))
-      drawText(name, vx + 5, vy + nameSize + 5, nameSize, fontBold, rgb(0.12, 0.16, 0.35))
-      drawText(safe(`Signed: ${f.value.timestamp}`), vx + 5, vy + fh - 5, 8, font, rgb(0.3, 0.3, 0.3))
+      const signed = safe(`Signed: ${f.value.timestamp}`)
+      if (fh < 26) {
+        // A signature column in a log table is a line high: the name and the
+        // time go side by side, shrunk to the box, rather than on two lines
+        // drawn over each other.
+        const gap = '   '
+        let size = Math.min(9, fh * 0.55)
+        const width = (sz) => fontBold.widthOfTextAtSize(name, sz) + font.widthOfTextAtSize(gap + signed, sz)
+        if (width(size) > fw - 6) size = Math.max(3.5, size * (fw - 6) / width(size))
+        const base = vy + (fh + size * 0.72) / 2
+        drawText(name, vx + 3, base, size, fontBold, rgb(0.12, 0.16, 0.35))
+        drawText(gap + signed, vx + 3 + fontBold.widthOfTextAtSize(name, size), base, size, font, rgb(0.3, 0.3, 0.3))
+      } else {
+        const nameSize = Math.max(9, Math.min(13, fh * 0.32))
+        drawText(name, vx + 5, vy + nameSize + 5, nameSize, fontBold, rgb(0.12, 0.16, 0.35))
+        drawText(signed, vx + 5, vy + fh - 5, 8, font, rgb(0.3, 0.3, 0.3))
+      }
     }
     }
   }

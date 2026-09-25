@@ -37,6 +37,8 @@ test('a document with every kind of value bakes', async () => {
     { type: 'mark', page: 0, xPct: 0.3, yPct: 0.7, wPct: 0.032, hPct: 0.022, value: '✓' },
     { type: 'mark', page: 0, xPct: 0.4, yPct: 0.7, wPct: 0.032, hPct: 0.022, value: '✗' },
     { type: 'signature', page: 0, xPct: 0.1, yPct: 0.5, wPct: 0.3, hPct: 0.06, value: { name: 'Jo Tech ✓', timestamp: '25 Sep 2026, 09:00' } },
+    // a signature column of a log table, a line high
+    { type: 'signature', page: 0, xPct: 0.6, yPct: 0.5, wPct: 0.12, hPct: 0.025, value: { name: 'Jo Tech', timestamp: '25 Sep 2026, 09:00' } },
   ]
   const out = await bakePdf(bytes, fields)
   const back = await PDFDocument.load(out)

@@ -10,7 +10,7 @@ const RX = {
   status: /\b(ok\s*\/?\s*fail|pass\s*\/?\s*fail|result|status|condition|inspect|check)\b|\bok\b|\bfail\b|\bn\/?a\b/i,
   // maintenance frequency codes: 1M 3M 6M 12M 1Y, or single D/W/M/Q/Y
   freq: /^(?:\d{1,2}\s*[dwmqy]|[dwmqy])$/i,
-  textish: /model|serial|barcode|calibrat|reading|value|measure|number|no\.?$|name|hours|pressure|temp|date|site|order|plan|cert|sheet/i,
+  textish: /model|serial|barcode|calibrat|reading|value|measure|number|no\.?$|name|hours|pressure|temp|date|site|order|plan|cert|sheet|\bid\b/i,
   // A label that asks for a figure: a unit, a quantity, a grading. Such a box
   // is typed into, never tapped OK / N/A / Fail, however narrow it is.
   reading: /reading|value|measure|grad(?:e|ing)|score|rating|level|qty|quantity|count|hours|time\b|load|pressure|temp|speed|flow|litres?|\bl\b|kpa|bar\b|psi|°|deg|volt|\bv\b|amp|\ba\b|\bhz\b|rpm|\bkva?\b|\bkw\b|\bmm\b|\bm\b|\bkg\b|%/i,

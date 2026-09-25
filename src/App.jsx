@@ -1433,7 +1433,7 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, box
       )}
       {f.type === 'signature' && (
         f.value
-          ? <div className="sigdone"><b>{f.value.name}</b><small>{f.value.timestamp}</small></div>
+          ? <div className={'sigdone' + (f.hPct * aspect < 0.04 ? ' oneline' : '')}><b>{f.value.name}</b><small>{f.value.timestamp}</small></div>
           : <button className="signbtn" onClick={onSign}>✎ Sign here</button>
       )}
     </div>
