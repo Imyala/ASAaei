@@ -94,14 +94,16 @@ places on a page:
   drawn rule rises to the top of its label, so it sits level with the words rather than half a
   row below them; a box on a typed line stays inside its table cell. Underscores inside a code
   ("AD__-ASAC-TMC_-____-AIU___", also wrapped over two lines), dots leading to a page number (a
-  table of contents), the rules under a running header or over a footer, a border drawn in the
+  table of contents, the leader sometimes printed as several runs of dots), the rules under a running header or over a footer, a border drawn in the
   gap between spaced rows, and the cover's controlled-copy stamp are not write-on lines. Short
   labels stacked with nothing after them ("Site: / Facility: / Date: / Equipment:") are.
 - **Printed answers** — a Result cell printing its choices ("OK / Not OK / NA", "Yes / No",
   "OK / Work required", in a card "Type | (UG) - (OH)") taps through them over the printed words;
   it is a question, not a heading, when a task (a clause number or a description) or a card label
   is beside it. Taken for a heading it made its row a header row, and the row lost its Comments
-  box. The same words on a line of their own inside a bigger cell get a tap on that line.
+  box. The same words on a line of their own inside a bigger cell get a tap on that line, and a
+  choice in a table carried over from the page before ("Yes / F104 Required", its column heading
+  left on that page) taps too.
 - **Readings asked for** — a bracketed unit along a line ("[°C]  [%]") gets a box before it; in a
   Remarks, Comments, Result or LUL/LPL cell a label ending in a colon gets one beside it, line by
   line ("Control valve setting:", "Time on load:"), one per unit column where the cell numbers
