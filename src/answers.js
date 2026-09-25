@@ -18,9 +18,11 @@ export function isTickField(f) { return f?.type === 'status' && f.options?.[0] =
 // '' (Auto) is the box's own cycle, 'tick' ticks and crosses, 'status'
 // OK / N/A / Fail. ('type' has no cycle: the box is typed into.)
 export const cycleFor = (f, mode = '') =>
-  (mode === 'tick' || (!mode && isTickField(f)) ? TICK_CYCLE
-    : mode === 'status' || !f?.options?.length ? STATUS_CYCLE
-      : ['', ...f.options])
+  (mode === 'tick' ? TICK_CYCLE
+    // a tick column that also offers N/A ("√ / X- N/A") taps through it too
+    : !mode && isTickField(f) ? (f.options.length > 2 ? ['', ...f.options] : TICK_CYCLE)
+      : mode === 'status' || !f?.options?.length ? STATUS_CYCLE
+        : ['', ...f.options])
 
 export const nextStatus = (v, cycle = STATUS_CYCLE) =>
   cycle[(cycle.indexOf(v) + 1) % cycle.length]

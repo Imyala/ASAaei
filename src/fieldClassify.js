@@ -69,7 +69,12 @@ const RX_STATUS_HEADER =
   /^(?:[a-z]+\s+)?(?:ok|pass|yes)\s*\/\s*(?:fail|n\/?a|not\s*ok|nok|no)\b|^(?:results?|status|condition|outcome)$|(?:^|\s)(?:yes\s*\/\s*no|ok\s*\/\s*not\s*ok|pass\s*\/\s*fail)$/i
 
 export function isStatusHeaderToken(text) {
-  return RX_STATUS_HEADER.test(norm(text))
+  return RX_STATUS_HEADER.test(norm(text)) || isTickHeading(text)
+}
+
+// A column headed for a tick or a cross: "√ / X- N/A", "✓ / ✗".
+export function isTickHeading(text) {
+  return /^[√✓✔]\s*\/\s*(?:x|✗|✘)(?:\b|-|\s|$)/i.test(norm(text))
 }
 
 // True for a row or column label that asks for a figure to be written in —

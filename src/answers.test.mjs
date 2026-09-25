@@ -19,6 +19,14 @@ test('a tick box taps tick, cross, clear — the second tap is a cross', () => {
   assert.equal(cycleFor({ type: 'status', options: ['✓'] }), TICK_CYCLE)
 })
 
+test('a tick column that offers N/A taps tick, cross, N/A, clear', () => {
+  const tna = { type: 'status', options: ['✓', '✗', 'N/A'] }
+  assert.deepEqual(cycleFor(tna), ['', '✓', '✗', 'N/A'])
+  assert.equal(cycleFor(tna, 'tick'), TICK_CYCLE)
+  assert.equal(carryValue('N/A', cycleFor(tna)), 'N/A')
+  assert.equal(carryValue('OK', cycleFor(tna)), '✓')
+})
+
 test('on Auto each box keeps its own cycle', () => {
   assert.equal(cycleFor(result), STATUS_CYCLE)
   assert.deepEqual(cycleFor(passFail), ['', 'Pass', 'N/A', 'Fail'])

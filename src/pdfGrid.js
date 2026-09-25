@@ -1,4 +1,4 @@
-import { isStatusToken, isStatusHeaderToken, isRemarksToken, isReadingLabel, classifyHeader, norm } from './fieldClassify.js'
+import { isStatusToken, isStatusHeaderToken, isTickHeading, isRemarksToken, isReadingLabel, classifyHeader, norm } from './fieldClassify.js'
 
 // ---------------------------------------------------------------------------
 // Pure grid geometry — build cells from a line grid and turn empty cells into
@@ -476,7 +476,16 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   // blank start of a row carried over from the previous page, the empty task
   // cell of a split row. The column around it is text, and nothing before it
   // on its row is — or it is a wide description column that is all but full.
+  const blankRow = (c) => ![c, ...rowOf(c)].some(hasText)
+  const blankRun = (c) => {
+    if (!blankRow(c)) return false
+    return cells.some((o) => o !== c && sameCol(o, c) && (Math.abs(o.y - (c.y + c.h)) <= 3 || Math.abs(o.y + o.h - c.y) <= 3) && blankRow(o))
+  }
   const strayInTextColumn = (c) => {
+    // blank rows left for more entries — two or more together, under a
+    // filled-in refrigerant log — are new records, not gaps (a single blank
+    // row is a spacer, or the tail of a row cut by the page break)
+    if (blankRun(c)) return false
     const share = textShare(c)
     if (share >= 0.7 && (leftAllEmpty(c) || (share >= 0.85 && c.w >= pw * 0.18))) return true
     return carriedOver(c)
@@ -497,6 +506,51 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   // its heading.
   const FLOC = /^[A-Z]{2,4}_*-[A-Z0-9]{2,6}_*-/
   const listSlot = (c) => rowOf(c).filter((o) => FLOC.test(textIn(o)) || /^\d{5,9}$/.test(textIn(o))).length >= 2
+  // A printed answer — the words of one, or a picture the size of a tick —
+  // in a column whose heading asks for answers. Its box is the column's full
+  // width (a tick picture sits in a square of its own at the cell's left).
+  const ANSWER_MARK = /^(?:n\/?a|ok|not\s*ok|✓|√|✔|x|✗|✘|yes|no|pass|fail)$/i
+  const printedAnswer = (c) => {
+    if (c.h < MIN_CELL_H) return null
+    const t = textIn(c)
+    if (t ? !ANSWER_MARK.test(t) : !holdsImage(c)) return null
+    let head = null
+    // (up its own column: a section row across the table is not its heading)
+    for (const o of cells.filter((o) => o !== c && o.y + o.h <= c.y + 2 && sameCol(o, c) && o.w <= Math.max(c.w * 1.6, 80)).sort((a, b) => b.y - a.y)) {
+      const ot = textIn(o)
+      if (!ot || ANSWER_MARK.test(ot)) continue
+      head = o
+      break
+    }
+    // no heading on this page (rows carried on from the page before): a
+    // narrow column of printed answers is an answer column all the same
+    // — in a task table (a clause number or a task to its left), holding
+    // nothing but answers all the way down (not a column of hazard icons,
+    // nor the "OK" labels printed beside tick boxes)
+    if (!head && c.w <= 70) {
+      const col = cells.filter((o) => o !== c && sameCol(o, c) && o.w <= Math.max(c.w * 1.6, 80))
+      const answered = col.filter((o) => (textIn(o) ? ANSWER_MARK.test(textIn(o)) : holdsImage(o)))
+      const onlyAnswers = col.every((o) => !textIn(o) || ANSWER_MARK.test(textIn(o)))
+      const task = rowOf(c).some((o) => o.x + o.w <= c.x + 2 && (CLAUSE_RX.test(textIn(o)) || textIn(o).length >= 28))
+      if (answered.length >= 2 && onlyAnswers && task) {
+        // (with the empty rest of the cell beside a tick picture)
+        let right = c.x + c.w
+        if (!t) for (const o of rowOf(c).filter((o) => o.x >= c.x + c.w - 2 && !hasText(o)).sort((a, b) => a.x - b.x)) {
+          if (Math.abs(o.x - right) > 2) break
+          right = o.x + o.w
+        }
+        return { head: answered.some((o) => !textIn(o)) ? '√ / X- N/A' : '', box: { x: c.x, y: c.y, w: Math.min(right, c.x + 80) - c.x, h: c.h } }
+      }
+    }
+    if (!head) return null
+    const ht = textIn(head)
+    if (!(isTickHeading(ht) || isStatusHeaderToken(ht) || isStatusToken(ht))) return null
+    // printed words fill their own column; under a heading that spans two
+    // ("Results" over "OK | ☐") they are the label of the box beside them
+    if (t && head.w > c.w * 1.3) return null
+    const x = Math.min(c.x, head.x), x2 = Math.max(c.x + c.w, head.x + head.w)
+    return { head: ht, box: { x, y: c.y, w: x2 - x, h: c.h } }
+  }
   // A column's title: the text of the nearest header-row cell above it
   // (headerFor gives the nearest text of any kind, which in a column of
   // printed limits is the "N/A" of the row before).
@@ -572,6 +626,15 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
       if (out.length >= MAX_FIELDS_PER_PAGE) break
       continue
     }
+    // An answer already printed in a filled-in copy — "N/A", or a tick
+    // picture — in a column headed for answers: a tap box over the whole
+    // answer cell, so the next visit's answer can replace it.
+    const printed = printedAnswer(c)
+    if (printed) {
+      out.push({ ...mkField('status', pageIndex, printed.box, pw, ph, 'Result', statusCycleFor(printed.head)), covers: true, printed: true })
+      if (out.length >= MAX_FIELDS_PER_PAGE) break
+      continue
+    }
     // skip cells that already contain text (labels / printed codes / values)
     if (hasText(c)) continue
     // skip empty cells that sit on the printed header/title row
@@ -598,7 +661,9 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     const isStatusHeading = (t) => !!t && (isStatusToken(t) || isStatusHeaderToken(t))
     let statusHeading = ''
     if (c.w < pw * 0.16) {
-      const heading = headerFor(c)
+      // (an answer printed in the row above — "N/A" — is not the heading)
+      const near = headerFor(c)
+      const heading = ANSWER_MARK.test(near) ? titleOf(c) || near : near
       if (isStatusHeading(heading)) statusHeading = heading
       else {
         const tok = texts.find((t) => {
@@ -679,7 +744,10 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
       && rowOf(c).some((o) => o !== before && hasText(o) && o.x + o.w <= before.x + 2)
     // A narrow column headed for a date, a name, an ID or a number is typed
     // into (the refrigerant record's "Date" and "Staff ID").
-    const textHeading = !statusHeading && classifyHeader(titleOf(c) || heading) === 'text'
+    // (and so is a narrow column already written in with values — "R22",
+    // "R410" under "Refrigerant Type" — rather than answers)
+    const textHeading = !statusHeading && (classifyHeader(titleOf(c) || heading) === 'text'
+      || colMates(c).some((o) => hasText(o) && !inHeaderRow(o) && !ANSWER_MARK.test(textIn(o)) && !isStatusToken(textIn(o)) && !answerChoices(textIn(o)) && !TICK_RX.test(textIn(o))))
     let type = statusHeading || ((narrow || taskRowTick) && !asksForFigure && !textHeading) ? 'status' : 'text'
     const figureNamed = type === 'status' && namedFigure
     if (namesUnit || figureNamed) type = 'text'
@@ -714,7 +782,16 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     out.push(field)
     if (out.length >= MAX_FIELDS_PER_PAGE) break
   }
-  return out
+  // A printed answer's box spans its cell; the empty rest of a cell beside
+  // a tick picture is part of it, not a box of its own.
+  const over = out.filter((f) => f.printed)
+  if (!over.length) return out
+  const area = (f) => f.wPct * f.hPct
+  return out.filter((f) => f.printed || !over.some((p) => {
+    const ox = Math.min(p.xPct + p.wPct, f.xPct + f.wPct) - Math.max(p.xPct, f.xPct)
+    const oy = Math.min(p.yPct + p.hPct, f.yPct + f.hPct) - Math.max(p.yPct, f.yPct)
+    return ox > 0 && oy > 0 && ox * oy > 0.5 * area(f)
+  }))
 }
 
 // One field, inset a touch from the box it sits in, in page fractions.
@@ -785,7 +862,7 @@ function headerRowTest(cells, textIn, isChoice = () => false) {
 // something next to it, but the printed words made the cell read as filled,
 // so the tech had nowhere to type. Each such prompt gets a box: to its right
 // when the cell has room there, otherwise in the blank space under it.
-const PROMPT_RX = /^(?:record|enter|note|write|state|specify|list|measure|indicate|insert|type|tick|circle|initial|sign|print|attach|describe|give|provide)\b|:$/i
+const PROMPT_RX = /^(?:record|enter|note|write|state|specify|list|measure|indicate|insert|type|tick|circle|initial(?=\s*(?:here\b|:|$))|sign|print|attach|describe|give|provide)\b|:$/i
 
 function promptFields(cells, texts, pw, ph, pageIndex) {
   const out = []
@@ -849,7 +926,9 @@ function promptFields(cells, texts, pw, ph, pageIndex) {
 // tank for water. Either:", "Inspect starter motor as follows:") is not one.
 function isPrompt(text) {
   if (!PROMPT_RX.test(text) || text.length > 40) return false
-  if (/\.\s/.test(text)) return false
+  // a sentence is an instruction to do something ("Print the Site
+  // Manifest(s) for site."), not a place to write
+  if (/\.\s|\.$/.test(text)) return false
   // "Note 1", "Note 2": a pointer to a footnote, not an instruction to write.
   if (/^notes?\s*\d/i.test(text)) return false
   // "Alternator 3M 1Y Comment:" is a heading row, not a question.
@@ -1496,6 +1575,7 @@ function mergeSplitCells(cells, texts) {
 // The values a status cell should tap through, taken from its column heading.
 // An empty result means "use the app's default cycle" (OK / N/A / Fail).
 function statusCycleFor(heading) {
+  if (isTickHeading(heading || '')) return /n\/?a\b/i.test(heading) ? ['✓', '✗', 'N/A'] : ['✓', '✗']
   if (/yes\s*\/\s*no/i.test(heading || '')) return ['Yes', 'No', 'N/A']
   return /pass/i.test(heading || '') ? ['Pass', 'N/A', 'Fail'] : []
 }

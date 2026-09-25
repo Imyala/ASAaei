@@ -1,5 +1,6 @@
 // Node test for the pure grid logic (no pdfjs). Run: node src/pdfGrid.test.mjs
-import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent, MAX_FIELDS_PER_PAGE, gradeScale, choiceOptions, answerChoices, TICK_OPTIONS } from './pdfGrid.js'
+import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent, MAX_FIELDS_PER_PAGE, gradeScale, choiceOptions, answerChoices, TICK_OPTIONS, inheritColumnKinds, referenceRegions } from './pdfGrid.js'
+import { isReadingLabel } from './fieldClassify.js'
 
 let pass = 0, fail = 0
 const ok = (cond, msg) => { if (cond) { pass++ } else { fail++; console.error('  ✗ ' + msg) } }
@@ -830,6 +831,104 @@ console.log('a table of contents is not a page of write-on lines')
   ok(blankLineFields(texts, [], [], 595, 842, 0).length === 0, 'no box on a leader to a page number')
   const form = [T('Date: ....../....../......', 54, 200, 106, 10), T('R.........A', 300, 340, 106, 10)]
   ok(blankLineFields(form, [], [], 595, 842, 0).length === 4, 'a date line and a reading between letters still get boxes')
+}
+
+console.log('sub-columns with headings of their own keep a box each')
+{
+  // | Circuit | Trip time (ms): 0 deg | 180 deg |, four blank rows
+  const cells = [{ x: 50, y: 100, w: 100, h: 30 }, { x: 150, y: 100, w: 120, h: 15 }, { x: 150, y: 115, w: 60, h: 15 }, { x: 210, y: 115, w: 60, h: 15 }]
+  for (let r = 0; r < 4; r++) cells.push({ x: 50, y: 130 + r * 20, w: 100, h: 20 }, { x: 150, y: 130 + r * 20, w: 60, h: 20 }, { x: 210, y: 130 + r * 20, w: 60, h: 20 })
+  const texts = [T('Circuit', 53, 90, 112, 8), T('Trip time (ms)', 153, 230, 111, 8), T('0 deg.', 153, 180, 126, 8), T('180 deg.', 213, 250, 126, 8)]
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.filter((f) => f.yPct * PH > 129 && f.xPct * PW > 149).length === 8, `0 deg and 180 deg are two boxes a row (got ${fields.filter((f) => f.yPct * PH > 129 && f.xPct * PW > 149).length})`)
+}
+
+console.log('limits, page-break tails, carried-on tables')
+{
+  // Clause | Task | LUL | LPL | Result | Action — a blank LPL is "no limit"
+  const xs = [50, 90, 250, 290, 330, 400], ws = [40, 160, 40, 40, 70, 150]
+  const cells = [], texts = []
+  const row = (y) => { for (let c = 0; c < 6; c++) cells.push({ x: xs[c], y, w: ws[c], h: 25 }) }
+  row(100); ['Clause', 'Task', 'LUL', 'LPL', 'Result', 'Action'].forEach((h, c) => texts.push(T(h, xs[c] + 3, xs[c] + 30, 115, 8)))
+  row(125); texts.push(T('A.2', 53, 70, 140, 8), T('Check the PPE and eyewash facility', 93, 240, 140, 8), T('N/A', 253, 270, 140, 8))
+  row(150); texts.push(T('A.3', 53, 70, 165, 8), T('Inspect battery cases for swelling', 93, 240, 165, 8), T('N/A', 253, 270, 165, 8))
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(!fields.some((f) => f.xPct * PW > 289 && f.xPct * PW < 300), 'no box in a blank LPL cell')
+  ok(fields.filter((f) => f.xPct * PW > 329).length === 4, 'Result and Action keep theirs')
+
+  // the tail of a row cut by the page break, under the repeated heading
+  const cells2 = [], texts2 = []
+  const xs2 = [50, 100, 300, 360], ws2 = [50, 200, 60, 140]
+  const row2 = (y, h) => { for (let c = 0; c < 4; c++) cells2.push({ x: xs2[c], y, w: ws2[c], h }) }
+  row2(60, 25); ['Test step', 'Task 1 Yearly Inspection', 'Results', 'Action/Comments'].forEach((h, c) => texts2.push(T(h, xs2[c] + 3, xs2[c] + 40, 75, 8)))
+  row2(85, 30)
+  row2(115, 30); texts2.push(T('E.9.', 53, 70, 130, 8), T('If not already done, record all User set parameters', 103, 290, 130, 8))
+  const f2 = cellsToFields(cells2, texts2, PW, PH, 0)
+  ok(!f2.some((f) => f.yPct * PH > 84 && f.yPct * PH < 114), 'the blank tail row gets no boxes')
+
+  // a column that taps on one page and lost its heading on the next
+  const mk = (page, x, type) => ({ page, type, xPct: x, yPct: 0.2, wPct: 0.04, hPct: 0.02, options: [] })
+  const prev = [mk(0, 0.5, 'status'), { ...mk(0, 0.5, 'status'), yPct: 0.3 }, mk(0, 0.6, 'text'), { ...mk(0, 0.6, 'text'), yPct: 0.3, wPct: 0.04 }]
+  const next = [mk(1, 0.49, 'text'), { ...mk(1, 0.49, 'text'), yPct: 0.4 }, mk(1, 0.59, 'text'), { ...mk(1, 0.49, 'text'), yPct: 0.5, reading: true }]
+  const out = inheritColumnKinds([...prev, ...next])
+  ok(out[4].type === 'status' && out[5].type === 'status', 'the column carried on (a few points left) taps again')
+  ok(out[6].type === 'text', 'a column that typed stays typed')
+  ok(out[7].type === 'text', 'a box that asks for a reading stays typed')
+}
+
+console.log('readings asked for by name get a box')
+{
+  // | task | 1M | 3M | Comments: "CW Flow ____ L/s" / "Control valve setting:" |
+  const cells = [{ x: 50, y: 60, w: 300, h: 20 }, { x: 350, y: 60, w: 30, h: 20 }, { x: 380, y: 60, w: 180, h: 20 },
+    { x: 50, y: 80, w: 300, h: 40 }, { x: 350, y: 80, w: 30, h: 40 }, { x: 380, y: 80, w: 180, h: 40 },
+    { x: 50, y: 120, w: 300, h: 30 }, { x: 350, y: 120, w: 30, h: 30 }, { x: 380, y: 120, w: 180, h: 30 }]
+  const texts = [T('Air Handling Units', 60, 150, 73, 8), T('1M', 355, 370, 73, 8), T('Comments', 440, 490, 73, 8),
+    T('Check and record chilled water flow', 53, 200, 93, 8), T('CW Flow _________ L/s', 383, 470, 93, 8), T('Control valve setting:', 383, 470, 110, 8),
+    T('Check room conditions, record air temp and humidity', 53, 290, 133, 8), T('[°C]', 430, 445, 133, 8), T('[%]', 520, 532, 133, 8)]
+  const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
+  ok(fields.some((f) => f.label === 'Control valve setting' && f.xPct * PW > 470), '"Control valve setting:" has its box')
+  ok(fields.filter((f) => /\((?:°C|%)\)$/.test(f.label)).length === 2, `"[°C]  [%]" each get one (got ${fields.map((f) => f.label).join(' | ')})`)
+  ok(!isReadingLabel('9.2.2 Check oil level on pump is OK.') && isReadingLabel('Check and record oil level'), 'a task is not a reading unless it says record')
+}
+
+console.log('the maintenance table and its lists are read, not filled in')
+{
+  const cells = [{ x: 40, y: 60, w: 520, h: 16 }]
+  const heads = ['Line No', 'Maintenance Type', 'Interval', 'TechCert', 'Strategy', 'Audit']
+  const xs = [40, 80, 200, 280, 360, 440], ws = [40, 120, 80, 80, 80, 120]
+  const texts = [T('Maintenance Table *Refer PROC-151 for table attributes', 45, 300, 71, 8)]
+  heads.forEach((h, c) => { cells.push({ x: xs[c], y: 76, w: ws[c], h: 16 }); texts.push(T(h, xs[c] + 3, xs[c] + 30, 87, 8)) })
+  for (let r = 0; r < 4; r++) xs.forEach((x, c) => { cells.push({ x, y: 92 + r * 16, w: ws[c], h: 16 }); if (c < 4) texts.push(T(c ? 'Inspection' : String(r + 1), x + 3, x + 30, 103 + r * 16, 8)) })
+  ok(referenceRegions(cells, texts).length >= 1, 'the table is found')
+  ok(detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 }).length === 0, 'and nothing in it gets a box')
+}
+
+console.log('a filled-in checklist: printed answers can be answered again')
+{
+  // | Area | Task | √ / X- N/A |, answers printed "N/A" or a tick picture
+  const cells = [{ x: 50, y: 60, w: 120, h: 16 }, { x: 170, y: 60, w: 300, h: 16 }, { x: 470, y: 60, w: 50, h: 16 }]
+  const texts = [T('Environmental Inspection', 53, 160, 71, 8), T('√ / X- N/A', 473, 515, 71, 8)]
+  const rows = ['No evidence of leaks or spills', 'Located within a bund or cabinet', 'Fuel tank bunding in good condition', 'Spill kits available and stocked']
+  rows.forEach((t, r) => {
+    const y = 76 + r * 18
+    cells.push({ x: 50, y, w: 120, h: 18 }, { x: 170, y, w: 300, h: 18 }, { x: 470, y, w: 50, h: 18 })
+    texts.push(T(`Item ${r}`, 53, 90, y + 12, 8), T(t, 173, 360, y + 12, 8))
+    if (r % 2) texts.push(T('N/A', 473, 490, y + 12, 8))
+  })
+  const images = [{ x: 474, y: 78, w: 16, h: 13, drawn: true }]
+  const fields = cellsToFields(cells, texts, PW, PH, 0, images)
+  const taps = fields.filter((f) => f.type === 'status')
+  ok(taps.length === 4 && taps.every((f) => f.options.join() === '✓,✗,N/A'), `every answer cell taps ✓ / ✗ / N/A (got ${taps.length})`)
+  ok(taps.filter((f) => f.printed && f.covers).length === 3, 'the printed ones are marked, and covered when re-answered')
+}
+
+console.log('prompts are not sentences or release notes')
+{
+  const cells = [{ x: 50, y: 60, w: 60, h: 18 }, { x: 110, y: 60, w: 100, h: 18 }, { x: 210, y: 60, w: 330, h: 18 },
+    { x: 50, y: 78, w: 60, h: 18 }, { x: 110, y: 78, w: 100, h: 18 }, { x: 210, y: 78, w: 330, h: 18 }]
+  const texts = [T('Version', 53, 90, 71, 8), T('Date', 113, 140, 71, 8), T('Change description', 213, 300, 71, 8),
+    T('1', 53, 58, 89, 8), T('1 July 2020', 113, 170, 89, 8), T('Initial issue', 213, 260, 89, 8)]
+  ok(!detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 }).some((f) => /initial/i.test(f.label)), '"Initial issue" is not "Initial:"')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

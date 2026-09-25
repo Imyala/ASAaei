@@ -1444,15 +1444,15 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, box
 // of answering (ticks, or OK / N/A / Fail) or, on Auto, the box's own.
 function StatusCell({ f, boxMode, disabled, onChange }) {
   const cycle = cycleFor(f, boxMode)
-  const tick = cycle === TICK_CYCLE
+  const tick = cycle === TICK_CYCLE || cycle[1] === '✓'
   const v = f.value
   return (
-    <button className={'statuscell ' + statusClass(v) + (tick ? ' tick' : '')} disabled={disabled}
-      title={tick ? `${f.label || 'Tick'} — tap: tick, cross, clear`
+    <button className={'statuscell ' + statusClass(v) + (tick ? ' tick' : '') + (f.printed ? ' printed' : '')} disabled={disabled}
+      title={tick ? `${f.label || 'Tick'} — tap: ${cycle.filter(Boolean).map((o) => (o === '✓' ? 'tick' : o === '✗' ? 'cross' : o)).join(', ')}, clear`
         : 'Tap: ' + cycle.filter(Boolean).join(' → ') + ' → blank'}
       aria-label={tick ? `${f.label || 'Tick box'}: ${v === '✓' ? 'ticked' : v === '✗' ? 'crossed' : v || 'empty'}` : undefined}
       onClick={() => onChange({ value: nextStatus(v, cycle) })}>
-      {v === '✓' || v === '✗' ? <MarkGlyph mark={v} /> : (v || (tick ? '' : '–'))}
+      {v === '✓' || v === '✗' ? <MarkGlyph mark={v} /> : (v || (tick || f.printed ? '' : '–'))}
     </button>
   )
 }

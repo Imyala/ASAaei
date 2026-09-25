@@ -29,6 +29,7 @@ export function collectGeometry(opList, toVP, { OPS, Util }) {
   const rectFill = []
   const rectSegs = []
   let pending = [] // rectangles of the path now being built, awaiting paint
+  let shape = null // the extent of that path, when it has curves or slants
   const FILLS = new Set(FILL_OPS.map((n) => OPS[n]))
   const ENDS = new Set(END_OPS.map((n) => OPS[n]))
 
@@ -72,23 +73,43 @@ export function collectGeometry(opList, toVP, { OPS, Util }) {
     else if (fn === OPS.restore) { const top = stack.pop(); if (top) [ctm, fillColor] = top }
     else if (fn === OPS.transform) ctm = Util.transform(ctm, argsArray[i])
     else if (fn === OPS.setFillRGBColor) fillColor = JSON.stringify(argsArray[i])
-    else if (FILLS.has(fn)) { for (const k of pending) rectFill[k] = fillColor || 'default'; pending = [] }
-    else if (ENDS.has(fn)) pending = []
+    else if (FILLS.has(fn)) {
+      for (const k of pending) rectFill[k] = fillColor || 'default'
+      pending = []
+      // A small filled shape of curves or slanted lines is a drawing — a
+      // tick mark or an icon converted from a picture — and counts as one.
+      if (shape && shape.x2 - shape.x1 >= 3 && shape.y2 - shape.y1 >= 3 && shape.x2 - shape.x1 <= 40 && shape.y2 - shape.y1 <= 40) {
+        images.push({ x: shape.x1, y: shape.y1, w: shape.x2 - shape.x1, h: shape.y2 - shape.y1, drawn: true })
+      }
+      shape = null
+    } else if (ENDS.has(fn)) { pending = []; shape = null }
     else if (fn === OPS.constructPath) {
       pending = []
+      shape = null
       const ops = argsArray[i][0]
       const co = argsArray[i][1]
       let k = 0
       let cur = null
       let start = null // subpath start, for closePath
+      let shaped = false
+      const box = { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity }
+      const at = (pt) => { box.x1 = Math.min(box.x1, pt[0]); box.y1 = Math.min(box.y1, pt[1]); box.x2 = Math.max(box.x2, pt[0]); box.y2 = Math.max(box.y2, pt[1]); return pt }
       for (const op of ops) {
-        if (op === OPS.moveTo) { cur = toTop(Util.applyTransform([co[k], co[k + 1]], ctm)); start = cur; k += 2 }
-        else if (op === OPS.lineTo) { const nx = toTop(Util.applyTransform([co[k], co[k + 1]], ctm)); k += 2; if (cur) addSeg(cur[0], cur[1], nx[0], nx[1]); cur = nx }
+        if (op === OPS.moveTo) { cur = at(toTop(Util.applyTransform([co[k], co[k + 1]], ctm))); start = cur; k += 2 }
+        else if (op === OPS.lineTo) {
+          const nx = at(toTop(Util.applyTransform([co[k], co[k + 1]], ctm))); k += 2
+          if (cur) {
+            addSeg(cur[0], cur[1], nx[0], nx[1])
+            if (Math.abs(nx[0] - cur[0]) > 1.2 && Math.abs(nx[1] - cur[1]) > 1.2) shaped = true
+          }
+          cur = nx
+        }
         else if (op === OPS.rectangle) { addRect(co[k], co[k + 1], co[k + 2], co[k + 3]); k += 4 }
-        else if (op === OPS.curveTo) { cur = toTop(Util.applyTransform([co[k + 4], co[k + 5]], ctm)); k += 6 }
-        else if (op === OPS.curveTo2 || op === OPS.curveTo3) { cur = toTop(Util.applyTransform([co[k + 2], co[k + 3]], ctm)); k += 4 }
+        else if (op === OPS.curveTo) { cur = at(toTop(Util.applyTransform([co[k + 4], co[k + 5]], ctm))); k += 6; shaped = true }
+        else if (op === OPS.curveTo2 || op === OPS.curveTo3) { cur = at(toTop(Util.applyTransform([co[k + 2], co[k + 3]], ctm))); k += 4; shaped = true }
         else if (op === OPS.closePath) { if (cur && start) { addSeg(cur[0], cur[1], start[0], start[1]); cur = start } }
       }
+      if (shaped) shape = box
     }
   }
   // Paragraph shading is not a table. Word shades a paragraph as a rectangle
