@@ -1399,6 +1399,24 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
     }
   }
 
+  // ---- stacked labels -----------------------------------------------------
+  // "Site: / Facility: / Date: / Equipment: / SAP AS02:" printed down the
+  // page over a record, with nothing after them: the space to the right of
+  // each is where it is filled in. Two or more stacked, out of any table.
+  const labelLines = texts.filter((t) => /:$/.test(norm(t.str)) && norm(t.str).length <= 22 && !/^notes?:$/i.test(norm(t.str))
+    && !cellAt((t.x + t.xr) / 2, t.yTop - t.h * 0.3)
+    && !texts.some((o) => o !== t && byLine(o, t) && o.x > t.xr - 1))
+  const textRight = Math.max(...texts.map((t) => t.xr), pw * 0.6)
+  for (const t of labelLines) {
+    const stacked = labelLines.some((o) => o !== t && Math.abs(o.x - t.x) <= 3 && Math.abs(o.yTop - t.yTop) <= t.h * 3)
+    if (!stacked) continue
+    // a rule drawn out from it is its line, boxed below
+    if (hlines.some((l) => l.y >= t.yTop - t.h && l.y <= t.yTop + t.h * 1.2 && l.x1 >= t.xr - 10 && l.x1 < t.xr + 200)) continue
+    const x1 = t.xr + 4, x2 = Math.min(textRight, t.x + 300)
+    const h = Math.max(t.h * 1.35, MIN_CELL_H)
+    if (x2 - x1 >= 60) push({ x: x1, y: t.yTop + t.h * 0.3 - h, w: x2 - x1, h }, stripBlank(t.str))
+  }
+
   // ---- drawn rules --------------------------------------------------------
   const edgeOf = (l) => cells.some((c) => {
     const onEdge = Math.abs(c.y - l.y) <= 2 || Math.abs(c.y + c.h - l.y) <= 2

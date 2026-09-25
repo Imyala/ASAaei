@@ -13,7 +13,7 @@ const RX = {
   textish: /model|serial|barcode|calibrat|reading|value|measure|number|no\.?$|name|hours|pressure|temp|date|site|order|plan|cert|sheet|\bid\b/i,
   // A label that asks for a figure: a unit, a quantity, a grading. Such a box
   // is typed into, never tapped OK / N/A / Fail, however narrow it is.
-  reading: /reading|value|measure|grad(?:e|ing)|score|rating|level|qty|quantity|count|hours|time\b|load|pressure|temp|speed|flow|litres?|\bl\b|kpa|bar\b|psi|°|deg|volt|\bv\b|amp|\ba\b|\bhz\b|rpm|\bkva?\b|\bkw\b|\bmm\b|\bm\b|\bkg\b|%/i,
+  reading: /reading|value|measure|grad(?:e|ing)|score|rating|level|qty|quantity|count|hours|time\b|load|pressure|temp|speed|flow|litres?|\bl\b|kpa|bar\b|psi|°|deg|volt|\bv\b|amp|\ba\b|\bhz\b|rpm|\bkva?\b|\bkw\b|\bmm\b|\bm\b|\bkg\b|\bage\b|\byears?\b|\byrs?\b|%/i,
 }
 
 export const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
@@ -66,7 +66,7 @@ export function isRemarksToken(text) {
 // A longer heading that ENDS in a paired form ("Fuel Inventory Verified
 // Yes/No") is one too, and "Results" heads a column as "Result" does.
 const RX_STATUS_HEADER =
-  /^(?:[a-z]+\s+)?(?:ok|pass|yes)\s*\/\s*(?:fail|n\/?a|not\s*ok|nok|no)\b|^(?:results?|status|condition|outcome)$|(?:^|\s)(?:yes\s*\/\s*no|ok\s*\/\s*not\s*ok|pass\s*\/\s*fail)$/i
+  /^(?:[a-z]+\s+)?(?:ok|pass|yes)\s*\/\s*(?:fail|n\/?a|not\s*ok|nok|no)\b|^(?:results?|status|condition|outcome)$|(?:^|\s)\(?(?:yes\s*\/\s*no|ok\s*\/\s*not\s*ok|pass\s*\/\s*fail|ok\s*\/\s*fail)\)?$/i
 
 export function isStatusHeaderToken(text) {
   return RX_STATUS_HEADER.test(norm(text)) || isTickHeading(text)
