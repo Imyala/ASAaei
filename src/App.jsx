@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { startPdfRender, revokePageImages } from './pdfRender.js'
 import { bakePdf } from './bake.js'
 import { fileToPdfBytes } from './convert.js'
-import { loadTemplate, saveTemplate, findTemplateByDocKey } from './store.js'
+import { loadTemplate, saveTemplate, findTemplateByDocKey, loadBoxEdits, saveBoxEdits, clearBoxEdits } from './store.js'
+import { createCellFinder, cellAtPoint } from './pdfBoxes.js'
+import { diffBoxEdits, applyBoxEdits, hasBoxEdits, sameBox } from './boxEdits.js'
 import { getProfile, setProfile, applyProfile } from './profile.js'
 import Settings from './Settings.jsx'
 import Mark from './Mark.jsx'
@@ -13,21 +15,16 @@ import { wasmAvailable, deviceEngineEnabled, isolationProblem, STALL_LIMIT_MS, E
 // running version is identifiable when diagnosing stale caches.
 const BUILD_ID = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev'
 
-// ---- field defaults (sizes are fractions of the page) --------------------
-const DEFAULT_SIZE = {
-  text: { wPct: 0.28, hPct: 0.028 },
-  dropdown: { wPct: 0.28, hPct: 0.028 },
-  status: { wPct: 0.1, hPct: 0.028 },
-  checkgroup: { wPct: 0.34, hPct: 0.028 },
-  signature: { wPct: 0.26, hPct: 0.08 },
+// ---- boxes the tech can add by hand ---------------------------------------
+// What each "add" button puts on the page, and its size (page fractions) when
+// the tap is not inside a ruled cell to snap to.
+const ADD_KINDS = {
+  text: { label: 'Text box', size: { w: 0.2, h: 0.022 }, make: () => ({ type: 'text', options: [], label: 'Text' }) },
+  status: { label: 'OK / N/A / Fail', size: { w: 0.07, h: 0.022 }, make: () => ({ type: 'status', options: [], label: 'Result' }) },
+  tick: { label: 'Tick ✓', size: { w: 0.022, h: 0 }, make: () => ({ type: 'status', options: ['✓'], label: 'Tick', covers: true }) },
+  signature: { label: 'Signature', size: { w: 0.26, h: 0.06 }, make: () => ({ type: 'signature', options: [], label: 'Signature' }) },
 }
-const TOOL_LABEL = {
-  select: 'Select / Move',
-  text: 'Text field',
-  status: 'OK / Fail / N/A',
-  dropdown: 'Dropdown',
-  signature: 'Signature',
-}
+const kindOf = (f) => (f.type === 'status' ? (f.options?.length === 1 && f.options[0] === '✓' ? 'tick' : 'status') : f.type)
 // What the "open a document" file pickers accept. Legacy .doc is included
 // because the LibreOffice converter reads it; without a converter running the
 // open path explains that rather than failing obscurely.
@@ -47,11 +44,13 @@ const nextStatus = (v, cycle = STATUS_CYCLE) =>
 const statusClass = (v) => {
   if (!v) return 'blank'
   const s = String(v)
-  if (/^(ok|pass)$/i.test(s)) return 'OK'
-  if (/^fail$/i.test(s)) return 'Fail'
+  if (/^(ok|pass|yes|done|✓)$/i.test(s)) return 'OK'
+  if (/^(fail|no|not .+)$/i.test(s)) return 'Fail'
   if (/^\d+$/.test(s)) return 'val' // a grade on a printed scale
   return 'NA'
 }
+// A printed tick box ("☐") taps between a tick and empty.
+const isTickField = (f) => f?.options?.length === 1 && f.options[0] === '✓'
 
 let idCounter = 1
 const nextId = () => `f${idCounter++}`
@@ -93,6 +92,9 @@ export default function App() {
   const [tool, setTool] = useState('select')
   const [selectedId, setSelectedId] = useState(null)
   const [locked, setLocked] = useState(false)
+  // Whether boxes this tech added or removed on an earlier visit were put
+  // back when this form opened.
+  const [editsApplied, setEditsApplied] = useState(false)
   const [busy, setBusy] = useState('')
   const [docKey, setDocKey] = useState('')
   const [docTitle, setDocTitle] = useState('')
@@ -105,6 +107,9 @@ export default function App() {
   // What the "check for update" link last said: '' | a short message.
   const [updateNote, setUpdateNote] = useState('')
   const [updateBusy, setUpdateBusy] = useState(false)
+  // A newer build has taken over in the background and is waiting for the
+  // page to load it.
+  const [updateReady, setUpdateReady] = useState(false)
   const updateProfile = (patch) => {
     const p = { ...profile, ...patch }
     setProfileState(p); setProfile(p)
@@ -121,6 +126,14 @@ export default function App() {
   const renderRef = useRef(null)
   // Lets the opening screen's Cancel actually stop the work in flight.
   const openJobRef = useRef(null)
+  // The fields detection found when this document opened, before any saved
+  // hand edits — what those edits are measured against.
+  const baseFieldsRef = useRef([])
+  // Where this document's hand edits are kept: its document number, or its
+  // file name when it has none.
+  const editKeyRef = useRef('')
+  // Reads the ruled cells of a page on demand, to snap an added box.
+  const cellFinderRef = useRef(null)
 
   const selected = fields.find((f) => f.id === selectedId) || null
 
@@ -130,6 +143,34 @@ export default function App() {
   // the in-page engine. Nothing on screen reports the answer — a technician
   // cannot act on it, and Settings › Advanced shows it to whoever can.
   useEffect(() => { discoverConverter() }, [])
+
+  // New builds arrive by themselves. The browser only looks for a new
+  // service worker when a page loads, and the one it finds takes over the
+  // page already open — which kept running the old build until a second
+  // reload, so a fix published in the morning was not on the tablet in the
+  // afternoon. Look shortly after start, whenever the app comes back to the
+  // screen, and every half hour; when a newer worker takes over, load the new
+  // build straight away on the home screen, and in the editor offer it
+  // without touching the document being filled.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return undefined
+    const hadController = !!navigator.serviceWorker.controller
+    const onTakeover = () => { if (hadController) setUpdateReady(true) }
+    navigator.serviceWorker.addEventListener('controllerchange', onTakeover)
+    const look = () => navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {})
+    const first = setTimeout(look, 5000)
+    const every = setInterval(look, 30 * 60 * 1000)
+    const onVisible = () => { if (document.visibilityState === 'visible') look() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      navigator.serviceWorker.removeEventListener('controllerchange', onTakeover)
+      clearTimeout(first); clearInterval(every)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+  useEffect(() => {
+    if (updateReady && (screen === 'home' || screen === 'settings')) location.reload()
+  }, [updateReady, screen])
 
   // ---- rendering a document into the editor -------------------------------
   // Page geometry comes back at once, so the document is on screen and fillable
@@ -178,8 +219,9 @@ export default function App() {
     setShowPages(false)
     setManualPages(new Set())
     setSelectedId(null)
-    setTool('select')
+    setTool('text')
     setScreen('editor')
+    return total
   }, [])
 
   // Central open path. LIVE DETECTION ALWAYS WINS: the fields are read fresh
@@ -205,13 +247,23 @@ export default function App() {
         applied = match.name
       }
     }
+    baseFieldsRef.current = fields
+    editKeyRef.current = dk || `file:${name.toLowerCase()}`
+    cellFinderRef.current?.destroy()
+    cellFinderRef.current = createCellFinder(bytes)
     // Fill the tech's own recurring fields (name, SAP ID, date) up front.
     fields = applyProfile(fields, getProfile())
     setAppliedTemplate(applied)
-    await showBytesInEditor(bytes, name, {
+    const pageCount = await showBytesInEditor(bytes, name, {
       fields, mode: 'fill', resetLock: true, pages,
       fidelity, missingFonts, graphicNotes,
     })
+    // Boxes the tech added or removed on this form before go back on, over
+    // what detection found this time.
+    const edits = await loadBoxEdits(editKeyRef.current).catch(() => null)
+    const withEdits = applyBoxEdits(baseFieldsRef.current, edits, pageCount, nextId)
+    if (withEdits.applied) setFields(applyProfile(withEdits.fields, getProfile()))
+    setEditsApplied(withEdits.applied)
   }, [showBytesInEditor])
 
   // "Reload file": the document as it was when it opened — every box empty
@@ -359,23 +411,37 @@ export default function App() {
     fileRef.current?.click()
   }
 
-  // ---- placing / editing fields (design mode) -----------------------------
-  const onPageClick = (e, pageIndex) => {
-    if (mode !== 'design' || tool === 'select') return
+  // ---- adding / removing boxes by hand ("Edit boxes") ----------------------
+  // Tap the page to add a box of the chosen kind. It snaps to the ruled cell
+  // under the tap, so it fits its square; off the grid it lands centred on the
+  // tap. Tap a box to select it, drag it to move it, drag its corner to size
+  // it, and × to delete it.
+  const onPageClick = async (e, pageIndex) => {
+    if (mode !== 'design') return
     const rect = e.currentTarget.getBoundingClientRect()
-    const size = DEFAULT_SIZE[tool]
-    const field = {
-      id: nextId(), type: tool, page: pageIndex,
-      xPct: clamp((e.clientX - rect.left) / rect.width, 0, 1 - size.wPct),
-      yPct: clamp((e.clientY - rect.top) / rect.height, 0, 1 - size.hPct),
-      ...size,
-      label: TOOL_LABEL[tool],
-      options: tool === 'dropdown' ? ['Option 1', 'Option 2', 'Option 3'] : [],
-      value: tool === 'signature' ? null : '',
+    const fx = (e.clientX - rect.left) / rect.width
+    const fy = (e.clientY - rect.top) / rect.height
+    const kind = ADD_KINDS[tool] || ADD_KINDS.text
+    let box = null
+    const found = await cellFinderRef.current?.cellsOn(pageIndex).catch(() => null)
+    if (found && found.pw) {
+      const c = cellAtPoint(found.cells, fx * found.pw, fy * found.ph, found.pw, found.ph)
+      if (c) {
+        const pad = 1.5
+        box = { xPct: (c.x + pad) / found.pw, yPct: (c.y + pad) / found.ph, wPct: (c.w - pad * 2) / found.pw, hPct: (c.h - pad * 2) / found.ph }
+      }
     }
-    setFields((f) => [...f, field])
+    if (!box) {
+      const w = kind.size.w
+      const h = kind.size.h || w * (rect.width / rect.height) // a tick box is square
+      box = { xPct: clamp(fx - w / 2, 0, 1 - w), yPct: clamp(fy - h / 2, 0, 1 - h), wPct: w, hPct: h }
+    }
+    // A box already there: select it rather than stack a second on top.
+    const hit = fields.find((f) => sameBox({ ...box, page: pageIndex }, f))
+    if (hit) { setSelectedId(hit.id); return }
+    const field = { id: nextId(), page: pageIndex, ...box, ...kind.make(), value: tool === 'signature' ? null : '' }
+    setFields((fs) => [...fs, field])
     setSelectedId(field.id)
-    setTool('select')
   }
   const updateField = (id, patch) =>
     setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)))
@@ -383,13 +449,62 @@ export default function App() {
     setFields((fs) => fs.filter((f) => f.id !== id))
     if (selectedId === id) setSelectedId(null)
   }
+  // Change a box between a text box, an OK / N/A / Fail cell and a tick box.
+  const retypeField = (f, kind) => {
+    const made = ADD_KINDS[kind].make()
+    const generic = !f.label || Object.values(ADD_KINDS).some((k) => k.make().label === f.label)
+    updateField(f.id, { ...made, covers: !!made.covers, label: generic ? made.label : f.label, value: '' })
+  }
 
-  // drag to move (pointer events → works with touch)
-  const onFieldPointerDown = (e, field, pageEl) => {
-    if (mode !== 'design' || tool !== 'select') return
+  // The hand edits so far, kept for this form: the next time it opens they
+  // go back on over fresh detection.
+  const saveEditsNow = (fs = fields) => {
+    const key = editKeyRef.current
+    if (!key || !pages.length) return
+    const edits = diffBoxEdits(baseFieldsRef.current, fs, pages.length)
+    ;(hasBoxEdits(edits) ? saveBoxEdits(key, edits) : clearBoxEdits(key)).catch(() => {})
+  }
+  useEffect(() => {
+    if (mode !== 'design') return
+    const t = setTimeout(() => saveEditsNow(), 600)
+    return () => clearTimeout(t)
+  }, [fields, mode]) // eslint-disable-line react-hooks/exhaustive-deps
+  const startEditing = () => { setMode('design'); setTool('text'); setSelectedId(null) }
+  const stopEditing = () => { saveEditsNow(); setMode('fill'); setSelectedId(null) }
+  // Back to exactly what detection found: every box added by hand goes, every
+  // box removed comes back. Values typed into boxes that stay are kept.
+  const resetBoxes = () => {
+    if (!window.confirm('Put the boxes back the way they were detected? Boxes you added are removed and boxes you deleted come back.')) return
+    const values = new Map(fields.map((f) => [f.id, f.value]))
+    const restored = baseFieldsRef.current.map((f) => (values.has(f.id) ? { ...f, value: values.get(f.id) } : f))
+    setFields(applyProfile(restored, getProfile()))
+    clearBoxEdits(editKeyRef.current).catch(() => {})
+    setEditsApplied(false)
+    setSelectedId(null)
+  }
+  // Delete / Backspace removes the selected box while editing (keyboards).
+  useEffect(() => {
+    if (mode !== 'design' || !selectedId) return
+    const onKey = (e) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (/^(input|textarea|select)$/i.test(e.target?.tagName || '')) return
+      e.preventDefault()
+      deleteField(selectedId)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mode, selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Drag to move, or drag the corner handle to size (pointer events, so it
+  // works with touch). The grab point stays under the finger.
+  const onFieldPointerDown = (e, field, pageEl, how = 'move') => {
+    if (mode !== 'design' || !pageEl) return
     e.stopPropagation()
     setSelectedId(field.id)
-    dragRef.current = { id: field.id, pageEl }
+    const rect = pageEl.getBoundingClientRect()
+    const px = (e.clientX - rect.left) / rect.width
+    const py = (e.clientY - rect.top) / rect.height
+    dragRef.current = { id: field.id, pageEl, how, dx: px - field.xPct, dy: py - field.yPct }
     e.currentTarget.setPointerCapture?.(e.pointerId)
   }
   useEffect(() => {
@@ -397,13 +512,14 @@ export default function App() {
       const d = dragRef.current
       if (!d) return
       const rect = d.pageEl.getBoundingClientRect()
+      const px = (e.clientX - rect.left) / rect.width
+      const py = (e.clientY - rect.top) / rect.height
       setFields((fs) => fs.map((f) => {
         if (f.id !== d.id) return f
-        return {
-          ...f,
-          xPct: clamp((e.clientX - rect.left) / rect.width - f.wPct / 2, 0, 1 - f.wPct),
-          yPct: clamp((e.clientY - rect.top) / rect.height - f.hPct / 2, 0, 1 - f.hPct),
+        if (d.how === 'resize') {
+          return { ...f, wPct: clamp(px - f.xPct, 0.01, 1 - f.xPct), hPct: clamp(py - f.yPct, 0.007, 1 - f.yPct) }
         }
+        return { ...f, xPct: clamp(px - d.dx, 0, 1 - f.wPct), yPct: clamp(py - d.dy, 0, 1 - f.hPct) }
       }))
     }
     const up = () => (dragRef.current = null)
@@ -531,6 +647,10 @@ export default function App() {
     // memory their images hold.
     renderRef.current?.cancel()
     renderRef.current = null
+    if (mode === 'design') saveEditsNow()
+    setMode('fill')
+    cellFinderRef.current?.destroy()
+    cellFinderRef.current = null
     setPages((old) => { revokePageImages(old); return [] })
     setScreen('home'); setFields([]); setPageOrder([])
     setAppliedTemplate(''); setDocKey(''); setDocTitle(''); setShowPages(false)
@@ -851,7 +971,15 @@ export default function App() {
         </div>
 
         <div className="group right">
-          {tapPages.length > 0 && (
+          <button className={'editboxes' + (mode === 'design' ? ' on' : '')}
+            onClick={mode === 'design' ? stopEditing : startEditing} aria-pressed={mode === 'design'}
+            title={mode === 'design' ? 'Finish adding and removing boxes' : 'Add boxes, move them, or remove them'}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="12" height="12" rx="2" /><path d="M18 15v6M15 18h6" />
+            </svg>
+            {mode === 'design' ? 'Done editing' : 'Edit boxes'}
+          </button>
+          {tapPages.length > 0 && mode !== 'design' && (
             <button className={'typeall' + (typingEverywhere ? ' on' : '')} onClick={toggleTypingEverywhere}
               aria-pressed={typingEverywhere}
               title={typingEverywhere
@@ -878,6 +1006,48 @@ export default function App() {
       </header>
 
       {busy && <div className="busy">{busy}</div>}
+      {updateReady && (
+        <div className="updatebar">
+          A new version of the app is ready — it loads when you go back to Home.
+          <button className="inlinelink" onClick={() => {
+            if (window.confirm('Load the new version now? What you have entered on this document will be cleared.')) location.reload()
+          }}>Load it now</button>
+        </div>
+      )}
+      {mode === 'design' && (
+        <div className="editbar" role="toolbar" aria-label="Edit boxes">
+          <span className="editbar-hint">Tap the page to add</span>
+          <div className="seg">
+            {Object.entries(ADD_KINDS).map(([k, v]) => (
+              <button key={k} className={tool === k ? 'on' : ''} aria-pressed={tool === k} onClick={() => setTool(k)}>{v.label}</button>
+            ))}
+          </div>
+          {selected ? (
+            <>
+              <span className="editbar-sep" aria-hidden="true" />
+              <span className="editbar-sel">Selected: <b>{selected.label || ADD_KINDS[kindOf(selected)]?.label}</b></span>
+              {selected.type !== 'signature' && (
+                <div className="seg">
+                  {['text', 'status', 'tick'].map((k) => (
+                    <button key={k} className={kindOf(selected) === k ? 'on' : ''} onClick={() => retypeField(selected, k)}>{ADD_KINDS[k].label}</button>
+                  ))}
+                </div>
+              )}
+              <button className="danger" onClick={() => deleteField(selected.id)}>Delete box</button>
+            </>
+          ) : (
+            <span className="editbar-tip">Tap a box to select it · drag to move · drag its corner to resize</span>
+          )}
+          <span className="spacer" />
+          <button onClick={resetBoxes}>Reset to detected boxes</button>
+          <button className="primary" onClick={stopEditing}>Done</button>
+        </div>
+      )}
+      {editsApplied && mode !== 'design' && (
+        <div className="applied-bar">✓ Your box changes for this form were put back.
+          <button className="inlinelink" onClick={resetBoxes}>Use the detected boxes instead</button>
+        </div>
+      )}
       {appliedTemplate && (
         <div className="applied-bar">✓ Opened ready to fill — saved layout <b>{appliedTemplate}</b> applied
           {docKey ? <> for <code>{docKey}</code></> : null}.</div>
@@ -951,12 +1121,12 @@ export default function App() {
         <div className="pagescroll" onScroll={onStageScroll}>
           {orderedSelection().map((i) => { const pg = pages[i]; return pg ? (
             <div key={i} className="pagewrap">
-              <div className="page" data-page={i} onClick={(e) => onPageClick(e, i)}
+              <div className={'page' + (mode === 'design' ? ' editing' : '')} data-page={i} onClick={(e) => onPageClick(e, i)}
                 style={{ aspectRatio: `${pg.pxWidth} / ${pg.pxHeight}` }}>
                 {pg.src
                   ? <img src={pg.src} alt={`Page ${i + 1}`} draggable={false} />
                   : <div className="pageloading" aria-label={`Page ${i + 1} is still drawing`} />}
-                {fields.some((f) => f.page === i && f.type === 'status') && (
+                {mode !== 'design' && fields.some((f) => f.page === i && f.type === 'status') && (
                   <label className="manualtoggle" title="Type figures instead of tapping OK / N/A / Fail on this page"
                     onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={manualPages.has(i)} onChange={() => togglePageManual(i)} />
@@ -967,7 +1137,9 @@ export default function App() {
                   <FieldView key={f.id} field={f} aspect={pg.pxHeight / pg.pxWidth} mode={mode} tool={tool} locked={locked}
                     selected={f.id === selectedId} manual={manualPages.has(i)} onSelect={() => setSelectedId(f.id)}
                     onChange={(patch) => updateField(f.id, patch)} onSign={() => signField(f)}
-                    onPointerDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'))} />
+                    onPointerDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'))}
+                    onResizeDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'), 'resize')}
+                    onDelete={() => deleteField(f.id)} />
                 ))}
               </div>
             </div>
@@ -1035,7 +1207,7 @@ function clamp(v, lo, hi) {
 }
 
 // ---- one field, rendered on the page -------------------------------------
-function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, manual, onSelect, onChange, onSign, onPointerDown }) {
+function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, manual, onSelect, onChange, onSign, onPointerDown, onResizeDown, onDelete }) {
   // The type is sized from the box itself (a share of its height, in units
   // of the page's width), so a value fits its cell at any zoom — a fixed 13px
   // overflowed the performance test run table's short rows on a phone and
@@ -1045,16 +1217,30 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, man
     width: `${f.wPct * 100}%`, height: `${f.hPct * 100}%`,
     '--fh': `${(f.hPct * aspect * 100).toFixed(3)}cqw`,
   }
-  const designMove = mode === 'design' && tool === 'select' && !locked
+  const designMove = mode === 'design' && !locked
   const cls = `field ${f.type}${selected ? ' selected' : ''}${designMove ? ' movable' : ''}`
   const readOnly = mode === 'fill' && locked && f.type !== 'signature'
 
   if (mode === 'design') {
+    const kind = kindOf(f)
+    const shown = kind === 'tick' ? (f.value || '')
+      : kind === 'status' ? (f.value || (f.options?.length ? f.options.join(' / ') : 'OK / N/A / Fail'))
+        : kind === 'signature' ? '✎ Signature'
+          : (f.value || f.label || 'Text')
     return (
-      <div className={cls} style={style}
+      <div className={`${cls} editing ${kind}`} style={style} title={f.label}
         onClick={(e) => { e.stopPropagation(); onSelect() }}
         onPointerDown={designMove ? onPointerDown : undefined}>
-        <span className="ghost">{f.label}</span>
+        <span className="ghost">{shown}</span>
+        {selected && (
+          <>
+            <button type="button" className="fx-del" aria-label="Delete this box"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onDelete?.() }}>×</button>
+            <span className="fx-resize" aria-hidden="true"
+              onPointerDown={(e) => { e.stopPropagation(); onResizeDown?.(e) }} />
+          </>
+        )}
       </div>
     )
   }
@@ -1086,11 +1272,13 @@ function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, man
             placeholder={f.label && f.label !== 'Result' && hintFits(f) ? f.label : ''}
             onChange={(e) => onChange({ value: e.target.value })} />
         ) : (
-          <button className={'statuscell ' + statusClass(f.value)}
+          <button className={'statuscell ' + statusClass(f.value) + (isTickField(f) ? ' tick' : '')}
             disabled={readOnly}
-            title={'Tap: ' + cycleFor(f).filter(Boolean).join(' → ') + ' → blank'}
+            title={isTickField(f) ? `${f.label || 'Tick'} — tap to tick or untick`
+              : 'Tap: ' + cycleFor(f).filter(Boolean).join(' → ') + ' → blank'}
+            aria-pressed={isTickField(f) ? !!f.value : undefined}
             onClick={() => onChange({ value: nextStatus(f.value, cycleFor(f)) })}>
-            {f.value || '–'}
+            {f.value || (isTickField(f) ? '' : '–')}
           </button>
         )
       )}

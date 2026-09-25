@@ -32,6 +32,7 @@ test('a document with every kind of value bakes', async () => {
     { type: 'text', page: 0, xPct: 0.1, yPct: 0.2, wPct: 0.3, hPct: 0.08, value: 'A long remark that has to wrap onto more than one line of the box' },
     { type: 'status', page: 0, xPct: 0.5, yPct: 0.1, wPct: 0.03, hPct: 0.015, value: 'Fail' },
     { type: 'status', page: 0, xPct: 0.5, yPct: 0.2, wPct: 0.05, hPct: 0.02, value: 'OK', covers: true },
+    { type: 'status', page: 0, xPct: 0.6, yPct: 0.2, wPct: 0.015, hPct: 0.011, value: '✓', options: ['✓'], covers: true },
     { type: 'signature', page: 0, xPct: 0.1, yPct: 0.5, wPct: 0.3, hPct: 0.06, value: { name: 'Jo Tech ✓', timestamp: '25 Sep 2026, 09:00' } },
   ]
   const out = await bakePdf(bytes, fields)

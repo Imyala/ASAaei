@@ -57,3 +57,51 @@ export async function detectPageBoxes(page, pageIndex, lib) {
   const cells = buildCells(hlines, vlines, rects, pw, ph, texts)
   return detectPageFields({ cells, texts, hlines, pw, ph, pageIndex, images })
 }
+
+// The ruled cells of each page, on demand, for snapping a box the tech adds
+// by hand to the cell they tapped. The document is opened once and each page
+// read the first time it is asked for. Sizes are in viewport points, the same
+// frame the fields use.
+export function createCellFinder(bytes) {
+  let opened = null
+  const pages = new Map()
+  const open = () => {
+    if (!opened) {
+      const worker = new pdfjsLib.PDFWorker({ port: new PdfWorker() })
+      const task = pdfjsLib.getDocument({ data: bytes.slice(), worker })
+      opened = task.promise.then((pdf) => ({ pdf, task, worker }))
+    }
+    return opened
+  }
+  return {
+    cellsOn(pageIndex) {
+      if (!pages.has(pageIndex)) {
+        pages.set(pageIndex, open().then(async ({ pdf }) => {
+          const page = await pdf.getPage(pageIndex + 1)
+          const vp = page.getViewport({ scale: 1 })
+          const toVP = (x, y) => vp.convertToViewportPoint(x, y)
+          const [opList, textContent] = await Promise.all([page.getOperatorList(), page.getTextContent()])
+          const { hlines, vlines, rects } = collectGeometry(opList, toVP, pdfjsLib)
+          const texts = textTokens(textContent.items, toVP)
+          return { pw: vp.width, ph: vp.height, cells: buildCells(hlines, vlines, rects, vp.width, vp.height, texts) }
+        }).catch(() => ({ pw: 0, ph: 0, cells: [] })))
+      }
+      return pages.get(pageIndex)
+    },
+    destroy() {
+      opened?.then(({ task, worker }) => { task.destroy?.(); worker.destroy?.() }).catch(() => {})
+    },
+  }
+}
+
+// The smallest ruled cell under a point (in points), or null. A whole table
+// or a page-wide frame is not a cell to put one box in.
+export function cellAtPoint(cells, x, y, pw, ph) {
+  let best = null
+  for (const c of cells) {
+    if (x <= c.x || x >= c.x + c.w || y <= c.y || y >= c.y + c.h) continue
+    if (c.w * c.h > pw * ph * 0.25) continue
+    if (!best || c.w * c.h < best.w * best.h) best = c
+  }
+  return best
+}

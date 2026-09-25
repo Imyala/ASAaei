@@ -77,6 +77,24 @@ function stripValue(f) {
   return { ...f, value: f.type === 'signature' ? null : '' }
 }
 
+// ---- boxes the tech added or removed by hand ------------------------------
+// Kept per form (its document number) as a change list over what detection
+// finds — { pageCount, added: [field], removed: [{ page, xPct, yPct, wPct,
+// hPct }] } — so opening the form again re-applies the tech's fixes on top of
+// fresh detection rather than freezing an old layout.
+export async function loadBoxEdits(docKey) {
+  if (!docKey) return null
+  return (await get('edits:' + docKey).catch(() => null)) || null
+}
+export async function saveBoxEdits(docKey, edits) {
+  if (!docKey) return
+  await set('edits:' + docKey, { ...edits, added: edits.added.map(stripValue), savedAt: new Date().toISOString() })
+}
+export async function clearBoxEdits(docKey) {
+  if (!docKey) return
+  await del('edits:' + docKey)
+}
+
 // ---- cached source document (for offline use) ----------------------------
 // The last file opened with a saved fill layout is kept so it can be reopened
 // straight away (and while offline) without picking the file again.

@@ -62,8 +62,11 @@ export function isRemarksToken(text) {
 //
 // The paired forms include "OK/Not OK" (the fuel procedure's "Result OK/Not
 // OK" column), "OK/NOK" and "Yes/No".
+//
+// A longer heading that ENDS in a paired form ("Fuel Inventory Verified
+// Yes/No") is one too, and "Results" heads a column as "Result" does.
 const RX_STATUS_HEADER =
-  /^(?:[a-z]+\s+)?(?:ok|pass|yes)\s*\/\s*(?:fail|n\/?a|not\s*ok|nok|no)\b|^(?:result|status|condition|outcome)$/i
+  /^(?:[a-z]+\s+)?(?:ok|pass|yes)\s*\/\s*(?:fail|n\/?a|not\s*ok|nok|no)\b|^(?:results?|status|condition|outcome)$|(?:^|\s)(?:yes\s*\/\s*no|ok\s*\/\s*not\s*ok|pass\s*\/\s*fail)$/i
 
 export function isStatusHeaderToken(text) {
   return RX_STATUS_HEADER.test(norm(text))

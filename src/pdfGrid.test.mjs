@@ -1,5 +1,5 @@
 // Node test for the pure grid logic (no pdfjs). Run: node src/pdfGrid.test.mjs
-import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent, MAX_FIELDS_PER_PAGE, gradeScale } from './pdfGrid.js'
+import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent, MAX_FIELDS_PER_PAGE, gradeScale, choiceOptions, TICK_OPTIONS } from './pdfGrid.js'
 
 let pass = 0, fail = 0
 const ok = (cond, msg) => { if (cond) { pass++ } else { fail++; console.error('  ✗ ' + msg) } }
@@ -695,6 +695,85 @@ console.log('the whole performance test run table fits on its page')
   }
   const fields = cellsToFields(cells, texts, PW, PH, 0)
   ok(fields.length === 516, `all 516 reading cells get a box (got ${fields.length})`)
+}
+
+
+console.log('tick boxes printed inline are tickable, each on its own')
+{
+  const cells = []
+  for (let r = 0; r < 4; r++) cells.push({ x: 20, y: 80 + r * 12, w: 250, h: 12 }, { x: 270, y: 80 + r * 12, w: 140, h: 12 }, { x: 410, y: 80 + r * 12, w: 60, h: 12 }, { x: 470, y: 80 + r * 12, w: 60, h: 12 })
+  const texts = [T('Fault lamp operation', 273, 360, 89, 8), T('☐', 488, 495, 89, 8), T('Yes', 497, 510, 89, 8), T('☐', 541, 549, 89, 8), T('No', 551, 560, 89, 8)]
+  texts.push(T('☐ Generator placed back in auto mode', 30, 200, 300, 8))
+  const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
+  const ticks = fields.filter((f) => f.options.join() === TICK_OPTIONS.join())
+  ok(ticks.length === 3, `each printed ☐ becomes a tick box (got ${ticks.length})`)
+  ok(ticks.some((f) => f.label === 'Yes') && ticks.some((f) => f.label === 'No'), `labelled by the word beside it (got ${ticks.map((f) => f.label).join(', ')})`)
+  ok(ticks.every((f) => f.covers && f.wPct * PW < 14), 'each is the size of the printed square and clears it on download')
+}
+
+console.log('a cell printed with a choice taps through it')
+{
+  ok(choiceOptions('Done/Not Done').join() === 'Done,Not Done', 'Done/Not Done')
+  ok(choiceOptions('Required / Not Required').join() === 'Required,Not Required', 'Required / Not Required')
+  ok(choiceOptions('OK/Not OK') === null && choiceOptions('Pass/Fail') === null && choiceOptions('Remarks/Action') === null, 'headings are not choices')
+}
+
+console.log('rows above a repeated header take their status from it')
+{
+  const xs = [50, 90, 260, 295, 330, 395], ws = [40, 170, 35, 35, 65, 120]
+  const cells = [], texts = []
+  const row = (y, h) => { for (let c = 0; c < xs.length; c++) cells.push({ x: xs[c], y, w: ws[c], h }) }
+  row(100, 20); row(120, 20); row(140, 30); row(170, 20); row(190, 20)
+  texts.push(T('9.2.6', 53, 75, 113, 8), T('Check for no unusual noise.', 93, 200, 113, 8))
+  texts.push(T('9.2.7', 53, 75, 133, 8), T('Check all covers.', 93, 180, 133, 8))
+  ;['Clause', 'Tasks', '1M±', '3M**', 'Result OK/Not OK', 'Action Taken'].forEach((h, c) => texts.push(T(h, xs[c] + 3, xs[c] + ws[c] - 3, 153, 8)))
+  texts.push(T('9.2.8', 53, 75, 183, 8), T('Check all valves.', 93, 180, 183, 8), T('9.2.9', 53, 75, 203, 8), T('Check for leaks.', 93, 180, 203, 8))
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  const above = fields.filter((f) => f.yPct * PH < 140)
+  ok(above.filter((f) => f.type === 'status').length === 6, `1M, 3M and Result tap above the repeated header too (got ${above.filter((f) => f.type === 'status').length})`)
+}
+
+console.log('gaps in a column of printed text are not boxes')
+{
+  // "C.2 | Site Configuration Data (SCDs)" section rows between clause rows.
+  const cells = [], texts = []
+  const rows = [['C.2.1', 'Confirm you have access'], ['', 'Site Configuration Data (SCDs)'], ['C.2.2', 'Where files are required'], ['C.2.2.1', 'Control Charger File Name:'], ['C.2.2.2', 'Start Charger File Name:']]
+  rows.forEach(([k, t], r) => {
+    cells.push({ x: 60, y: 100 + r * 30, w: 50, h: 30 }, { x: 110, y: 100 + r * 30, w: 200, h: 30 }, { x: 310, y: 100 + r * 30, w: 230, h: 30 })
+    if (k) texts.push(T(k, 63, 90, 112 + r * 30, 8))
+    texts.push(T(t, 113, 250, 112 + r * 30, 8))
+  })
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(!fields.some((f) => f.xPct * PW < 110), 'the blank clause cell of a section row gets no box')
+  ok(fields.filter((f) => f.xPct * PW > 309).length === 5, 'the answer column keeps every box')
+}
+
+console.log('units in brackets, Yes/No columns, figures under a Result heading')
+{
+  const cells = [
+    { x: 50, y: 100, w: 80, h: 14 }, { x: 130, y: 100, w: 60, h: 14 }, { x: 190, y: 100, w: 60, h: 14 }, { x: 250, y: 100, w: 60, h: 14 },
+    { x: 50, y: 114, w: 80, h: 14 }, { x: 130, y: 114, w: 60, h: 14 }, { x: 190, y: 114, w: 60, h: 14 }, { x: 250, y: 114, w: 60, h: 14 },
+  ]
+  const texts = [T('Phase voltage:', 52, 110, 111, 7), T('[V]', 178, 188, 111, 7), T('[V]', 238, 248, 111, 7), T('[V]', 298, 308, 111, 7)]
+  const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
+  ok(fields.filter((f) => /\(V\)/.test(f.label)).length === 3, `"[V]" cells get a box before the unit (got ${fields.map((f) => f.label).join(', ')})`)
+
+  const cells2 = [], texts2 = []
+  for (let r = 0; r < 4; r++) cells2.push({ x: 50, y: 100 + r * 20, w: 60, h: 20 }, { x: 110, y: 100 + r * 20, w: 80, h: 20 }, { x: 190, y: 100 + r * 20, w: 60, h: 20 })
+  texts2.push(T('Date', 53, 70, 113, 8), T('Fuel Inventory Verified Yes/No', 112, 188, 113, 8), T('Result', 193, 220, 113, 8))
+  texts2.push(T('Fuel consumption (L)', 60, 186, 173, 8))
+  const f2 = cellsToFields(cells2, texts2, PW, PH, 0)
+  const yn = f2.filter((f) => f.xPct * PW > 109 && f.xPct * PW < 120)
+  ok(yn.length >= 2 && yn.every((f) => f.type === 'status' && f.options.join() === 'Yes,No,N/A'), 'a "Yes/No" column taps Yes / No / N/A')
+  const fc = f2.find((f) => f.xPct * PW > 189 && f.yPct * PH > 159)
+  ok(fc && fc.type === 'text', 'a row naming its unit is typed even under "Result"')
+}
+
+console.log('a stack of bare note lines carried onto a new page gets boxes')
+{
+  const hlines = [{ y: 92.5, x1: 116, x2: 541 }, { y: 114.5, x1: 116, x2: 541 }]
+  const fields = blankLineFields([T('Primary and Standby Generators', 150, 350, 40, 8)], hlines, [], 595, 842, 0)
+  ok(fields.length === 2 && fields.every((f) => f.label === 'Notes'), `both lines get a box (got ${fields.length})`)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

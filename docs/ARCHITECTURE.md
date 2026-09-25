@@ -67,9 +67,14 @@ places on a page:
   narrow column with no status heading is tapped **unless** its row or column asks for a figure
   ("Voltage (R): Volts", "Actual Reading"), in which case it is typed. A "Grading (1-5)" column
   taps through its scale.
-- **Tick boxes and units** — a cell holding only "☐" becomes a tap-cell (the printed box is
-  cleared under the answer on download); a cell holding only a right-aligned unit ("V", "A",
-  "Sec") gets a typing box in the space before it.
+- **Tick boxes and units** — a cell holding only "☐" becomes a tick box, and so does every "☐"
+  printed inline ("☐ Yes ☐ No", "☐ JSA Completed …"), sized to the printed square; a tap ticks,
+  another clears, and the download draws the tick over the cleared box. A cell holding only a
+  right-aligned unit ("V", "[A]", "Sec") gets a typing box in the space before it; a cell
+  printed "Done/Not Done" (a thing and its negation) taps through those two.
+- **Gaps in text columns** — an empty cell in a column that is otherwise printed text, with
+  nothing before it on its row (the clause cell beside a grey section heading, the blank start
+  of a row carried over from the previous page), is not an answer box.
 - **Shading bands** — Word paints the grey of a shaded row or column as one rectangle across all
   its cells; that rectangle is recognised as a band (its children tile it) and discarded, so
   shaded rows keep their boxes.
@@ -88,6 +93,13 @@ places on a page:
 
 `npm run inspect-pdf form.pdf` runs the same detection over a PDF on disk and prints the fields
 page by page, which is how a mis-detection is diagnosed without the app.
+
+**Hand edits** (`src/boxEdits.js`). What detection misses, the tech fixes in *Edit boxes*: a tap
+adds a box snapped to the ruled cell under it (`createCellFinder` in `src/pdfBoxes.js` reads a
+page's cells on demand), and boxes can be moved, sized, retyped and deleted. The fixes are saved
+per form (its document number) as a change list over detection — boxes removed, boxes added —
+not as a frozen layout, and re-applied over fresh detection the next time the form opens; a
+different page count leaves them unapplied.
 
 **One footer for every page.** Before a Word document is converted (on either route),
 `unifyPageFooters` in `src/docxPreflight.js` switches off Word's "different odd and even pages":
@@ -252,7 +264,10 @@ because of a specific way it went wrong on a real form:
   it wins. Otherwise the column's printed heading is used — in a "Test equipment | Model | Barcode"
   grid there is no row label and the heading is the only thing that says what goes in the box.
 - **Status cells carry their column's wording.** A column headed "Pass/Fail" taps through
-  Pass / N/A / Fail rather than stamping "OK" into a form that never uses the word.
+  Pass / N/A / Fail rather than stamping "OK" into a form that never uses the word; "Yes/No"
+  taps Yes / No / N/A; a "Result" column beside a printed 1–5 scale taps 1–5.
+- **A repeated header counts from below.** Rows a table carries over the top of a page sit above
+  the header it repeats there; their status comes from that header.
 
 ## 8. Offline / installable
 

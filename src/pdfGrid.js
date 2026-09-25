@@ -27,7 +27,10 @@ export function buildCells(hlines, vlines, rects, pw, ph, texts = []) {
   const cells = []
   const seen = new Set()
   const push = (r) => {
-    if (r.w < 14 || r.h < 8 || r.w > pw * 0.92 || r.h > ph * 0.55) return
+    // Wider than the page's text block is the page frame; the Cummins log
+    // sheet's tables run to within a few points of the edges, so the bound
+    // sits just inside the page itself.
+    if (r.w < 14 || r.h < 8 || r.w > pw * 0.97 || r.h > ph * 0.55) return
     const key = `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.w)},${Math.round(r.h)}`
     if (seen.has(key)) return
     seen.add(key); cells.push(r)
@@ -240,6 +243,7 @@ export function detectPageFields({ cells, texts, hlines = [], pw, ph, pageIndex,
     for (const f of glyphCellFields(cells, texts, pw, ph, pageIndex)) add(f)
     for (const f of promptFields(cells, texts, pw, ph, pageIndex)) add(f)
   }
+  for (const f of inlineTickFields(texts, pw, ph, pageIndex)) add(f)
   for (const f of blankLineFields(texts, hlines, cells, pw, ph, pageIndex)) add(f)
   return out
 }
@@ -312,9 +316,80 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     return rows.size >= 4
   }
 
+  // Whether a cell holds printed text, once per cell.
+  const hasTextCache = new Map()
+  const hasText = (c) => {
+    if (!hasTextCache.has(c)) hasTextCache.set(c, cellHasText(c, texts))
+    return hasTextCache.get(c)
+  }
+  const sameRow = (a, b) => Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) >= 0.5 * Math.min(a.h, b.h)
+  // The other cells of a cell's column (same span, give or take).
+  const colMates = (c) => cells.filter((o) => o !== c && o.h >= MIN_CELL_H
+    && Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= 0.8 * Math.min(o.w, c.w)
+    && Math.abs(o.w - c.w) <= 0.25 * c.w)
+  const textShare = (c) => {
+    const mates = colMates(c)
+    return mates.length >= 3 ? mates.filter(hasText).length / mates.length : 0
+  }
+  const leftAllEmpty = (c) => cells.every((o) => o === c || !(o.x + o.w <= c.x + 2 && sameRow(o, c)) || !hasText(o))
+  // A gap in a column of printed text is not an answer box: the clause-number
+  // cell beside a grey section heading ("C.2 | Site Configuration Data"), the
+  // blank start of a row carried over from the previous page, the empty task
+  // cell of a split row. The column around it is text, and nothing before it
+  // on its row is — or it is a wide description column that is all but full.
+  const strayInTextColumn = (c) => {
+    const share = textShare(c)
+    if (share >= 0.7 && (leftAllEmpty(c) || (share >= 0.85 && c.w >= pw * 0.18))) return true
+    return carriedOver(c)
+  }
+  // The blank start of a row carried over from the page before, up to the
+  // words that did carry over ("| | | | Received | Remote | ☐"): when the
+  // row's first cell is such a gap, so is every blank cell before its text.
+  const carriedOver = (c) => {
+    const row = cells.filter((o) => sameRow(o, c)).sort((a, b) => a.x - b.x)
+    const first = row[0]
+    if (!first || first === c || hasText(first) || textShare(first) < 0.7) return false
+    const firstText = row.find(hasText)
+    return !!firstText && firstText.x >= c.x + c.w - 2 && row.every((o) => o.x >= c.x || !hasText(o))
+  }
+  // The column's status heading when it is printed BELOW the cell: the rows a
+  // table carries over the top of a page come before the header it repeats
+  // there ("9.2.6", "9.2.7" above "Clause | Tasks | 1M± | 3M** | Result").
+  const statusHeadingBelow = (c, isStatusHeading) => {
+    const below = cells
+      .filter((o) => o !== c && o.y >= c.y + c.h - 2 && o.y < c.y + 200
+        && Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= c.w * 0.6)
+      .sort((a, b) => a.y - b.y)
+    for (const o of below) {
+      const t = textIn(o)
+      if (!t) continue
+      if (isStatusHeading(t) && inHeaderRow(o)) return t
+      if (!isStatusToken(t)) return ''
+    }
+    return ''
+  }
+  // "1 2 3 4 5" printed along the header row, left of a "Result" column: the
+  // result is a grade on that scale (the fuel procedure's condition matrix).
+  const digitScaleLeftOf = (c) => {
+    const digits = texts.filter((t) => /^\d{1,2}$/.test(t.str) && t.xr <= c.x + 2 && t.yTop < c.y && t.yTop > c.y - 260)
+    for (const d of digits) {
+      const line = digits.filter((o) => Math.abs(o.yTop - d.yTop) <= 3).map((o) => Number(o.str)).sort((a, b) => a - b)
+      if (line.length >= 3 && line[0] === 1 && line.every((n, i) => n === i + 1)) return line.map(String)
+    }
+    return null
+  }
+
   for (const c of cells) {
+    // A cell printed with a choice to circle — "Done/Not Done" in a Remarks
+    // cell — taps through that choice, over the printed words.
+    const choice = choiceOptions(textIn(c))
+    if (choice && c.h >= MIN_CELL_H && !inHeaderRow(c) && !isTopCaptionCell(c)) {
+      out.push({ ...mkField('status', pageIndex, c, pw, ph, textIn(c), choice), covers: true })
+      if (out.length >= MAX_FIELDS_PER_PAGE) break
+      continue
+    }
     // skip cells that already contain text (labels / printed codes / values)
-    if (cellHasText(c, texts)) continue
+    if (hasText(c)) continue
     // skip empty cells that sit on the printed header/title row
     if (inHeaderRow(c) || isTopCaptionCell(c)) continue
     // skip what is physically not a box to write in
@@ -348,8 +423,10 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
           return tcx > c.x - 2 && tcx < c.x + c.w + 2 // header sits in this column
         })
         if (tok) statusHeading = tok.str
+        else statusHeading = statusHeadingBelow(c, isStatusHeading)
       }
     }
+    if (!statusHeading && strayInTextColumn(c)) continue
     // the row label sits to the left of the cell on the same row — use it as
     // the field label so profile autofill (SAP ID, name, date) still works
     const rowLabel = rowLabelFor(c)
@@ -373,7 +450,18 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
       if (out.length >= MAX_FIELDS_PER_PAGE) break
       continue
     }
-    let type = statusHeading || (narrow && !asksForFigure) ? 'status' : 'text'
+    // A row that names its unit outright — "Fuel consumption (L)", "Load
+    // (kW):" — takes a figure even under a "Result" heading.
+    const namesUnit = /\((?:l|litres?|kw|kva|v|volts?|a|amps?|hz|kpa|bar|psi|°c|ºc|%|mm|ml|rpm|hrs?|sec|s)\)\s*:?$/i.test(rowLabel)
+    if (/^results?$/i.test(statusHeading) && !namesUnit) {
+      const digits = digitScaleLeftOf(c)
+      if (digits) {
+        out.push(mkField('status', pageIndex, c, pw, ph, rowLabel || 'Grade', digits))
+        if (out.length >= MAX_FIELDS_PER_PAGE) break
+        continue
+      }
+    }
+    let type = namesUnit ? 'text' : statusHeading || (narrow && !asksForFigure) ? 'status' : 'text'
 
     if (type === 'text' && /signature/i.test(rowLabel)) type = 'signature'
 
@@ -474,31 +562,22 @@ function promptFields(cells, texts, pw, ph, pageIndex) {
   const pad = 1.5
   const sameRow = (a, b) => Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) >= 0.5 * Math.min(a.h, b.h)
   const rightOf = (c) => cells.find((o) => o !== c && Math.abs(o.x - (c.x + c.w)) <= 2 && sameRow(o, c))
-  // A column of labels: every other cell in it is a label too ("Instrument
-  // reading:", "HMI reading:", "Dip reading:" down a label | value table).
-  const labelColumn = (c) => {
-    const column = cells.filter((o) => o !== c && o.h >= MIN_CELL_H
-      && Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= 0.8 * Math.min(o.w, c.w)
-      && Math.abs(o.w - c.w) <= 0.25 * c.w)
-    return column.length > 0 && column.every((o) => {
-      const t = textInside(o, texts)
-      return t && /:$/.test(t) && t.length <= 40
-    })
-  }
   for (const c of cells) {
     if (c.h < MIN_CELL_H) continue
     const inside = tokensInside(c, texts)
     if (!inside.length) continue
-    // A label with its answer cell right beside it ("HMI reading: | ____")
-    // needs nothing more: the empty cell next door has its own box, and a
-    // second one squeezed in after the label was two boxes for one reading.
+    // A label with its answer cell right beside it ("HMI reading: | ____",
+    // or "| 1960L" once filled) needs nothing more: the value cell next door
+    // has its own box, and a second one squeezed in after the label was two
+    // boxes for one reading. A neighbour that is another label ("Engine
+    // Model: | ESN No:") is not a value cell.
     const next = rightOf(c)
-    if (next && !cellHasText(next, texts)) continue
+    const nextText = next ? textInside(next, texts) : ''
+    if (next && (!nextText || (nextText.length <= 12 && !/:$/.test(nextText)))) continue
     // The leftmost column of a table describes its rows; with an answer
     // column beside it, it never prompts for an answer inside itself.
     const hasLeft = texts.some((t) => t.xr <= c.x + 2 && t.yTop > c.y && t.yTop < c.y + c.h)
-    if (!hasLeft && next) continue
-    if (labelColumn(c)) continue
+    if (!hasLeft && next && !/:$/.test(textInside(c, texts))) continue
     const paras = paragraphsOf(inside)
     if (paras.length > 4 || !paras.every((p) => isPrompt(p.text))) continue
 
@@ -535,6 +614,10 @@ function promptFields(cells, texts, pw, ph, pageIndex) {
 function isPrompt(text) {
   if (!PROMPT_RX.test(text) || text.length > 40) return false
   if (/\.\s/.test(text)) return false
+  // "Note 1", "Note 2": a pointer to a footnote, not an instruction to write.
+  if (/^notes?\s*\d/i.test(text)) return false
+  // "Alternator 3M 1Y Comment:" is a heading row, not a question.
+  if (/(?:^|\s)\d{1,2}\s*[dwmqy](?:\s|$)/i.test(text)) return false
   return !/\b(?:follows|following|either|below|include[sd]?|including|taken|values|steps)\s*:$/i.test(text)
 }
 
@@ -558,6 +641,37 @@ const textInside = (c, texts) => norm(tokensInside(c, texts).map((t) => t.str).j
 const UNIT_RX = /^(?:v|a|w|kw|kva|va|hz|rpm|sec|secs|s|min|mins|hrs?|h|%|°c|ºc|c|kpa|bar|psi|l|litres?|ml|mm|m|kg|ohms?|Ω|mΩ|mv|ma|db)$/i
 const TICK_RX = /^[\u2610\u2611\u2612\u25a1\u25a2\u274f\u2750\u2751\u2752\uf06f\uf0a8]$/
 
+// What a tick box answers: the words printed right after it on its line
+// ("☐ Yes", "☐ JSA Completed …"), else the nearest words before it.
+function tickLabel(box, texts) {
+  const mid = box.y + box.h / 2
+  const onLine = texts.filter((t) => !TICK_RX.test(norm(t.str)) && Math.abs((t.yTop - t.h * 0.3) - mid) <= Math.max(box.h, t.h) * 0.6)
+  const after = onLine.filter((t) => t.x >= box.x + box.w - 2).sort((a, b) => a.x - b.x)[0]
+  const before = onLine.filter((t) => t.xr <= box.x + 2).sort((a, b) => b.xr - a.xr)[0]
+  const t = (after && after.x - (box.x + box.w) < 40 ? after : null) || before || after
+  return t ? norm(t.str).replace(/:$/, '').slice(0, 40) : 'Tick'
+}
+
+// A tick box printed inline — "☐ Yes  ☐ No", "☐ JSA Completed …" — is its
+// own little box, sized to the printed square, wherever it sits: in a cell of
+// text, or out on the page under a table. A cell that is nothing but the box
+// is handled whole by glyphCellFields, first.
+export function inlineTickFields(texts, pw, ph, pageIndex) {
+  const out = []
+  for (const t of texts) {
+    const chars = [...t.str]
+    chars.forEach((ch, i) => {
+      if (!TICK_RX.test(ch)) return
+      const [x1, x2] = chars.length === 1 ? [t.x, t.xr] : runExtent(t.str, i, i + 1, t.x, t.xr)
+      const size = Math.max(t.h * 1.05, 9)
+      const cx = (x1 + x2) / 2, cy = t.yTop - t.h * 0.33
+      const box = { x: cx - size / 2, y: cy - size / 2, w: size, h: size }
+      out.push({ ...mkField('status', pageIndex, box, pw, ph, tickLabel(box, texts), TICK_OPTIONS, 0), covers: true })
+    })
+  }
+  return out
+}
+
 export function glyphCellFields(cells, texts, pw, ph, pageIndex) {
   const out = []
   const pad = 1.5
@@ -568,17 +682,19 @@ export function glyphCellFields(cells, texts, pw, ph, pageIndex) {
     const t = inside[0]
     const str = norm(t.str)
     if (TICK_RX.test(str)) {
-      out.push({ ...mkField('status', pageIndex, c, pw, ph, 'Result'), covers: true })
+      out.push({ ...mkField('status', pageIndex, c, pw, ph, tickLabel(c, texts), TICK_OPTIONS), covers: true })
       continue
     }
-    if (!UNIT_RX.test(str)) continue
+    // "[V]", "(A)" as well as a bare "V"
+    const unit = str.replace(/^[[(]\s*|\s*[\])]$/g, '')
+    if (!UNIT_RX.test(unit)) continue
     // the unit sits at the right of its cell, with room to write before it
     const free = t.x - 2 - (c.x + pad)
     if (free < 18 || t.x < c.x + c.w * 0.5) continue
     const left = texts
       .filter((o) => o.xr <= c.x + 2 && Math.abs(o.yTop - t.yTop) <= Math.max(o.h, t.h) * 0.6)
       .sort((a, b) => b.xr - a.xr)[0]
-    const label = norm(`${left ? left.str.replace(/:$/, '') : 'Reading'} (${str})`)
+    const label = norm(`${left ? left.str.replace(/:$/, '') : 'Reading'} (${unit})`)
     out.push(mkField('text', pageIndex, { x: c.x, y: c.y, w: free + pad, h: c.h }, pw, ph, label))
   }
   return out
@@ -770,6 +886,15 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
       chained = placed.find((p) => l.y - p.y > 4 && l.y - p.y <= 30 && Math.abs(p.x1 - l.x1) <= 10)
       if (chained) label = chained.label
     }
+    // (d) a stack of bare lines of one length, nothing written between them:
+    // notes lines carried over from the page before, whose "Notes/Remarks:"
+    // caption stayed behind at the foot of that page.
+    if (!label && l.x2 - l.x1 >= 150) {
+      const twin = rules.find((r) => r !== l && Math.abs(r.x1 - l.x1) <= 4 && Math.abs(r.x2 - l.x2) <= 4
+        && Math.abs(r.y - l.y) > 6 && Math.abs(r.y - l.y) <= 30
+        && !texts.some((t) => t.yTop > Math.min(r.y, l.y) && t.yTop < Math.max(r.y, l.y) && t.xr > l.x1 && t.x < l.x2))
+      if (twin) label = 'Notes'
+    }
     if (!label) continue
     // The box rises from the line to the top of the label beside it, so it
     // sits level with the words it answers. LibreOffice sets these lines a
@@ -888,7 +1013,19 @@ function mergeSplitCells(cells, texts) {
 // The values a status cell should tap through, taken from its column heading.
 // An empty result means "use the app's default cycle" (OK / N/A / Fail).
 function statusCycleFor(heading) {
+  if (/yes\s*\/\s*no/i.test(heading || '')) return ['Yes', 'No', 'N/A']
   return /pass/i.test(heading || '') ? ['Pass', 'N/A', 'Fail'] : []
+}
+
+// What a printed tick box taps through: a tick, and back to empty.
+export const TICK_OPTIONS = ['✓']
+
+// The two choices of a cell printed "Done/Not Done", "Required/Not Required"
+// — a thing and its negation — or null. ("OK/Not OK" is a column heading.)
+export function choiceOptions(text) {
+  const m = norm(text).match(/^([A-Za-z][A-Za-z ]{1,18}?)\s*\/\s*not\s+([A-Za-z][A-Za-z ]{1,18})$/i)
+  if (!m || m[1].toLowerCase() !== m[2].toLowerCase() || /^ok$/i.test(m[1])) return null
+  return [m[1], `Not ${m[2]}`]
 }
 
 // The grades a "Grading (1-5)" / "Score 1 to 10" label asks for, or null.

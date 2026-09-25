@@ -81,20 +81,32 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
     } else if (f.type === 'status') {
       // Tri-state OK / Fail / N/A cell — draw the chosen value centred, at one
       // size for every cell unless the cell is too small for it.
-      const value = safe(String(f.value ?? ''))
-      if (!value) continue
-      let size = Math.min(10, fh * 0.75)
-      const w10 = fontBold.widthOfTextAtSize(value, size)
-      if (w10 > fw - 2) size = Math.max(4, size * (fw - 2) / w10)
-      const tw = fontBold.widthOfTextAtSize(value, size)
+      const raw = String(f.value ?? '')
+      if (!raw) continue
       // A cell that held a printed tick box ("☐") has its answer written over
       // the empty box, so the box is cleared first.
       if (f.covers) {
         const [rx, ry] = toUser(vx, vy + fh)
         page.drawRectangle({ x: rx, y: ry, width: fw, height: fh, rotate, color: rgb(1, 1, 1) })
       }
+      // A tick is drawn, not typed: the standard fonts have no "✓".
+      if (raw === '✓') {
+        const s = Math.min(fw * 0.8, fh * 0.8, 13)
+        const ox = vx + (fw - s) / 2, oy = vy + (fh - s) / 2
+        const pts = [[0.12, 0.55], [0.4, 0.85], [0.9, 0.15]].map(([px, py]) => toUser(ox + px * s, oy + py * s))
+        const thickness = Math.max(0.9, s * 0.14)
+        const color = rgb(0.1, 0.45, 0.2)
+        page.drawLine({ start: { x: pts[0][0], y: pts[0][1] }, end: { x: pts[1][0], y: pts[1][1] }, thickness, color })
+        page.drawLine({ start: { x: pts[1][0], y: pts[1][1] }, end: { x: pts[2][0], y: pts[2][1] }, thickness, color })
+        continue
+      }
+      const value = safe(raw)
+      let size = Math.min(10, fh * 0.75)
+      const w10 = fontBold.widthOfTextAtSize(value, size)
+      if (w10 > fw - 2) size = Math.max(4, size * (fw - 2) / w10)
+      const tw = fontBold.widthOfTextAtSize(value, size)
       drawText(value, vx + Math.max(1, (fw - tw) / 2), vy + (fh + size * 0.72) / 2, size,
-        fontBold, value === 'Fail' ? rgb(0.7, 0.1, 0.1) : rgb(0, 0, 0))
+        fontBold, /^(fail|no|not .+)$/i.test(value) ? rgb(0.7, 0.1, 0.1) : rgb(0, 0, 0))
     } else if (f.type === 'checkgroup') {
       const size = 10
       let cx = vx

@@ -324,9 +324,13 @@ npm test                 # unit tests
   "Result OK/Not OK", "Pass/Fail" — text for wider cells and for any box that asks for a figure,
   such as a "Voltage: Volts" row or an "Actual Reading" column; a "Grading (1-5)" column taps
   through 1–5; signature next to a "Signature" label). Shaded (grey) rows and columns keep their
-  boxes, and so do rows whose task text carries a link. A printed tick box "☐" becomes a tap-cell,
-  a cell holding only its unit ("V", "A", "Sec") gets a box before the unit, and a prompt printed
-  inside a cell ("Record water added", "Comments:") gets a box beside or under it. Write-on lines
+  boxes, and so do rows whose task text carries a link, and rows carried over the top of a page
+  above a repeated header. Every printed tick box "☐" — alone in a cell, or inline as in
+  "☐ Yes ☐ No" — is a box you tap to tick. A cell printed "Done/Not Done" taps through those two,
+  a "Yes/No" column taps Yes / No / N/A, a cell holding only its unit ("V", "[A]", "Sec") gets a
+  box before the unit, and a prompt printed inside a cell ("Record water added", "Comments:")
+  gets a box beside or under it. Grey section-heading rows and the blank starts of carried-over
+  rows get no box. Write-on lines
   get boxes level with their labels: "Fuel start: ____Litres", "Genset:...... Work Order
   Number:......", "Site:" with its line out at a tab stop, "Notes/Remarks:" over rows of dashes.
   Every box sits inside its own cell. PDFs with embedded form fields use those directly.
@@ -340,6 +344,12 @@ npm test                 # unit tests
 - **Type on all pages:** the toolbar button turns every tap-cell in the document into a box to
   type in (and back again). Each page still has its own *123 Manual entry* switch for one page
   at a time.
+- **Edit boxes:** add, move, resize and delete boxes yourself. Choose *Text box*, *OK / N/A /
+  Fail*, *Tick ✓* or *Signature* and tap the page: the box snaps to the ruled cell you tapped
+  (off the grid it lands where you tapped). Tap a box to select it, drag it to move it, drag its
+  corner to size it, change its kind, or press × / *Delete box*. Your changes are kept for that
+  form and put back the next time it opens, over fresh detection; *Reset to detected boxes*
+  undoes them.
 - **Values fit their boxes:** the text in a box is sized from the box, and on download a long
   entry wraps (tall boxes) or shrinks (short ones) so it never runs over the next cell.
 - **Profile autofill:** set your name + SAP ID once in Settings; every form opens with your name,
@@ -372,6 +382,11 @@ copy in the browser, PDF quality, switching the in-page engine off) were removed
 so there is nothing to set wrongly; a stored mode from an earlier build is ignored.
 
 ## Check for update
+
+New builds also arrive by themselves: the app looks for one shortly after it starts, whenever it
+comes back to the screen, and every half hour. On the home screen a new build loads straight
+away; in the middle of a document a bar says one is ready, and it loads when you go back to
+Home, so nothing being filled is lost.
 
 The home footer shows the build stamp with a **check for update** link. It asks the server for
 `version.json` (written at build time, never cached by the service worker) and compares it with
