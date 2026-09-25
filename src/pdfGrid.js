@@ -394,17 +394,29 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   const sameCol = (o, c) => Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= 0.6 * Math.min(o.w, c.w)
   const choiceCache = new Map()
   const printedChoice = (c) => {
+    if (!c) return null
     if (choiceCache.has(c)) return choiceCache.get(c)
     let out = null
     const t = textIn(c)
-    const opts = answerChoices(t)
+    const opts = answerChoices(t) || plainChoices(t)
     if (opts) {
-      const task = rowOf(c).some((o) => o.x + o.w <= c.x + 2 && (CLAUSE_RX.test(textIn(o)) || textIn(o).length >= 28))
+      // (or, in a card of labels and values, the label just before it:
+      // "SAP ID | ____ | RCDs Tested | Yes / No / NA")
+      const row = rowOf(c)
+      const label = row.find((o) => Math.abs(o.x + o.w - c.x) <= 2 && textIn(o) && textIn(o).length <= 30
+        && /[A-Za-z]{2}/.test(textIn(o)) && !isStatusHeaderToken(textIn(o)) && !isStatusToken(textIn(o)))
+      // (one choice in the row: "F/A I/O No. | Pass/Fail | A-1 | Pass/Fail…"
+      // is a heading row)
+      const card = !!label && row.some((o) => !textIn(o)) && row.filter((o) => textIn(o)).length >= 2
+        && !row.some((o) => answerChoices(textIn(o)))
+      const task = card || row.some((o) => o.x + o.w <= c.x + 2 && (CLAUSE_RX.test(textIn(o)) || textIn(o).length >= 28))
       const col = cells.filter((o) => o !== c && sameCol(o, c))
       const headed = col.some((o) => o.y + o.h <= c.y + 2 && c.y - o.y < 320
         && (/^results?\b/i.test(textIn(o)) || isStatusToken(textIn(o)) || isStatusHeaderToken(textIn(o))))
       const repeated = col.some((o) => answerChoices(textIn(o)))
-      if (task && (headed || repeated)) out = opts
+      // (a list of plain options — "(UG) - (OH)", "Wood - Steel - Concrete"
+      // — is a choice only in such a card)
+      if (answerChoices(t) ? task && (headed || repeated || card) : card) out = opts
     }
     choiceCache.set(c, out)
     return out
@@ -476,6 +488,13 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   // blank start of a row carried over from the previous page, the empty task
   // cell of a split row. The column around it is text, and nothing before it
   // on its row is — or it is a wide description column that is all but full.
+  // the nearest cell above in the column that holds text
+  const cellAbove = (c) => cells.filter((o) => o !== c && o.y + o.h <= c.y + 2 && sameCol(o, c) && textIn(o))
+    .sort((a, b) => b.y - a.y)[0] || null
+  const notesCaption = (c) => {
+    const o = cells.find((o) => o !== c && Math.abs(o.y + o.h - c.y) <= 3 && sameCol(o, c) && isRemarksToken(textIn(o)) && textIn(o).length <= 25)
+    return o ? textIn(o).replace(/:$/, '') : ''
+  }
   const blankRow = (c) => ![c, ...rowOf(c)].some(hasText)
   const blankRun = (c) => {
     if (!blankRow(c)) return false
@@ -486,6 +505,8 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     // filled-in refrigerant log — are new records, not gaps (a single blank
     // row is a spacer, or the tail of a row cut by the page break)
     if (blankRun(c)) return false
+    // nor is the blank area under a "Notes:" or "Comments:" caption
+    if (notesCaption(c)) return false
     const share = textShare(c)
     if (share >= 0.7 && (leftAllEmpty(c) || (share >= 0.85 && c.w >= pw * 0.18))) return true
     return carriedOver(c)
@@ -663,7 +684,7 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     if (c.w < pw * 0.16) {
       // (an answer printed in the row above — "N/A" — is not the heading)
       const near = headerFor(c)
-      const heading = ANSWER_MARK.test(near) ? titleOf(c) || near : near
+      const heading = ANSWER_MARK.test(near) ? titleOf(c) || near : printedChoice(cellAbove(c)) ? titleOf(c) : near
       if (isStatusHeading(heading)) statusHeading = heading
       else {
         const tok = texts.find((t) => {
@@ -768,6 +789,7 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     // "Entry" is the last resort, not the default.
     const label = type === 'status'
       ? 'Result'
+      : type === 'text' && !gridLabel && textShare(c) >= 0.7 && notesCaption(c) ? notesCaption(c)
       : type === 'signature' && !/signature/i.test(rowLabel) ? 'Signature'
         : figureNamed ? beforeText
           : ((!gridLabel && isReadingLabel(heading) && !isReadingLabel(rowLabel) ? heading : '')
@@ -953,7 +975,7 @@ const textInside = (c, texts) => norm(tokensInside(c, texts).map((t) => t.str).j
 // way the printed glyph made the cell read as filled, so the answer the form
 // asks for had nowhere to go. A unit gets a typing box in the space before it;
 // a tick box becomes an OK / N/A / Fail tap-cell.
-const UNIT_RX = /^(?:v|a|w|kw|kva|va|hz|rpm|sec|secs|s|min|mins|hrs?|h|%|°c|ºc|c|kpa|bar|psi|l|litres?|ml|mm|m|kg|ohms?|Ω|mΩ|mv|ma|db)$/i
+const UNIT_RX = /^(?:v|a|w|kw|kva|va|hz|rpm|sec|secs|s|min|mins|hrs?|h|yrs?|years?|months?|%|°c|ºc|c|kpa|bar|psi|l|litres?|ml|mm|m|kg|ohms?|Ω|mΩ|mv|ma|db)$/i
 const TICK_RX = /^[\u2610\u2611\u2612\u25a1\u25a2\u274f\u2750\u2751\u2752\uf06f\uf0a8]$/
 
 // What a tick box answers: the words printed right after it on its line
@@ -1609,6 +1631,19 @@ export function answerChoices(text) {
   // led by an answer: "Verified Yes/No" is the end of a heading
   return ANSWER_WORD.test(parts[0]) ? parts : null
 }
+// Two to four short plain options printed to be circled: "(UG) - (OH)",
+// "Wood - Steel - Concrete". Only a choice where the caller knows it is one.
+export function plainChoices(text) {
+  const t = norm(text)
+  if (!t || t.length > 40 || /^n\s*\/\s*a$/i.test(t)) return null
+  const raw = t.split(/\s*\/\s*|\s+-\s+/)
+  const parts = raw.map((p) => p.replace(/^\((.*)\)$/, '$1').trim())
+  if (parts.length < 2 || parts.length > 4) return null
+  if (parts.some((p) => !p || p.length > 15 || !/^[A-Za-z][A-Za-z ]*$/.test(p))) return null
+  // three or more, or each in brackets: "(Float) - Voltage" is a label
+  return parts.length >= 3 || raw.every((p) => /^\(.*\)$/.test(p.trim())) ? parts : null
+}
+
 // Whether a line can open a printed choice: it is one, or its first line.
 const startsChoice = (s) => !!answerChoices(s) || /^(?:ok|yes|pass|done)(?:\s*\/\s*[A-Za-z]*)?$/i.test(norm(s))
 
