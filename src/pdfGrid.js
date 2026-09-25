@@ -1418,8 +1418,10 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
   }
 
   // ---- drawn rules --------------------------------------------------------
+  // (a border can stand a few points off its cell's edge: Word's PDFs leave
+  // cell spacing between rows and draw the border in the gap)
   const edgeOf = (l) => cells.some((c) => {
-    const onEdge = Math.abs(c.y - l.y) <= 2 || Math.abs(c.y + c.h - l.y) <= 2
+    const onEdge = Math.abs(c.y - l.y) <= 4 || Math.abs(c.y + c.h - l.y) <= 4
     return onEdge && Math.min(c.x + c.w, l.x2) - Math.max(c.x, l.x1) > 4
   })
   const rules = []
@@ -1493,7 +1495,17 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
     push({ x: l.x1, y: top, w: l.x2 - l.x1, h: l.y - top }, label)
     placed.push({ y: l.y, x1: l.x1, x2: l.x2, label })
   }
-  return out
+  // The cover's controlled-copy stamp ("Controlled Copy Number …… / Issued
+  // to …… / Date …/…/…") is filled in by the document centre when it issues
+  // a copy, not by the tech — and on most covers it sits hidden under the
+  // red "Temporary amendments may apply" banner.
+  const stamp = texts.find((t) => /controlled copy number/i.test(t.str))
+  if (!stamp) return out
+  const inStamp = (f) => {
+    const x = f.xPct * pw, y = f.yPct * ph
+    return y > stamp.yTop - stamp.h * 2 && y < stamp.yTop + stamp.h * 5 && x > stamp.x - 20 && x < stamp.x + 400
+  }
+  return out.filter((f) => !inStamp(f))
 }
 
 // Advance widths (hundredths of an em) of printable ASCII, space to tilde:
