@@ -60,18 +60,31 @@ places on a page:
 
 - **Empty ruled cells** — a box in each, skipping the printed header row (a heading is the whole
   text of its cell, with the table's label column to its left; a task that merely wraps onto a
-  line reading "condition" is not a heading), cells that hold text or a picture, and cells too
-  short to write in. A cell is typed into or tapped (OK / N/A / Fail) by its column heading; a
+  line reading "condition" is not a heading), cells that hold text, a picture or an icon, blank
+  gutter columns running down beside a nested list, and cells too short to write in. A cell is
+  typed into or tapped (OK / N/A / Fail) by its column heading — footnote marks are ignored, so
+  "1M±" and "3M\*\*" are frequency columns, and "Result OK/Not OK" is a status heading; a
   narrow column with no status heading is tapped **unless** its row or column asks for a figure
-  ("Voltage (R): Volts", "Grading (1-5)", "Actual Reading"), in which case it is typed.
+  ("Voltage (R): Volts", "Actual Reading"), in which case it is typed. A "Grading (1-5)" column
+  taps through its scale.
+- **Tick boxes and units** — a cell holding only "☐" becomes a tap-cell (the printed box is
+  cleared under the answer on download); a cell holding only a right-aligned unit ("V", "A",
+  "Sec") gets a typing box in the space before it.
 - **Shading bands** — Word paints the grey of a shaded row or column as one rectangle across all
   its cells; that rectangle is recognised as a band (its children tile it) and discarded, so
   shaded rows keep their boxes.
-- **Prompts in cells** — "Record water added", "Start batteries:" printed inside an answer cell
-  get a box beside them (or under them when the cell is narrow).
+- **Prompts in cells** — "Record water added", "Start batteries:", "Comments:" printed inside an
+  answer cell get a box beside them (or under them when the cell is narrow). Not a label whose
+  answer cell is right beside it ("HMI reading: | ____"), a column of such labels, or a task that
+  introduces a list ("Check tank for water. Either:").
 - **Write-on lines** — typed runs of underscores, dashes or dots ("Fuel start: ____Litres",
   "Genset:......") and drawn rules with a label beside or above them ("Notes/Remarks:" over rows
-  of dashes) each get a box; the label is the words before the blank.
+  of dashes, "Site:" out at the margin with its line at a tab stop) each get a box; the label is
+  the words before the blank, back to the previous blank in the same run of text. A box on a
+  drawn rule rises to the top of its label, so it sits level with the words rather than half a
+  row below them; a box on a typed line stays inside its table cell. Underscores inside a code
+  ("AD__-ASAC-TMC_-____-AIU___") and the rules under a running header or over a footer are not
+  write-on lines.
 
 `npm run inspect-pdf form.pdf` runs the same detection over a PDF on disk and prints the fields
 page by page, which is how a mis-detection is diagnosed without the app.
@@ -217,7 +230,17 @@ because of a specific way it went wrong on a real form:
 - **Per-page caps, never document-wide.** A single global cap (once 800 fields) ran out partway
   through page 25 of a 37-page procedure, so the Appendix C inspection record on pages 26–37 —
   the part the tech actually fills in — opened with no boxes and no indication anything was
-  missing. Each page is bounded on its own instead.
+  missing. Each page is bounded on its own instead — and the bound has to clear the densest real
+  page: the performance test run table is 12 × 43 = 516 boxes, and a cap of 250 left every
+  shaded row of it empty.
+- **A cell closes at the next rule across its own column.** Cells used to be read band by band
+  between consecutive rules anywhere on the page, so any short line — a link's underline under
+  a clause number, a small table nested in the Action Taken column, the split between two
+  sub-rows beside a merged cell — cut every column in two and neither half was closed. Whole
+  rows (B.2.7, B.2.8; the Day Tank table) opened with no boxes. Now each column pairs a rule with
+  the next rule that crosses *it*, and rules are compared as the union of their pieces. The
+  cells of a table nested inside a text cell are kept; nested boxes inside an *empty* cell are
+  still content-control placeholders and are dropped.
 - **Split cells are re-joined.** Word draws a checkbox content control as a small square inside the
   answer cell; its edges reconstruct as a second cell, giving two tap-cells in one tick box. Two
   touching empty cells whose combined span matches a width the table uses elsewhere are merged.

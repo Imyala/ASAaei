@@ -26,6 +26,9 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
   }
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+  // The standard fonts only carry the Windows-1252 characters, and one that
+  // is not among them ("✓", "≤", an emoji) made the whole download fail.
+  const safe = (value) => encodable(font, value)
   const pages = pdfDoc.getPages()
   // original page index -> the new indices it maps to (usually one, but a page
   // could in principle be included more than once).
@@ -63,19 +66,34 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
     }
 
     if (f.type === 'text' || f.type === 'dropdown') {
-      const value = String(f.value ?? '')
+      const value = safe(String(f.value ?? ''))
       if (!value) continue
-      const size = Math.max(8, Math.min(13, fh * 0.6))
-      drawText(value, vx + 2, vy + (fh + size) / 2, size, font, rgb(0, 0, 0))
+      // The value stays inside its box: a long entry wraps onto more lines
+      // where the box is tall enough (an Action Taken cell), and shrinks where
+      // it is not (a reading in the performance test run table), instead of
+      // running over the neighbouring cells.
+      const { size, lines } = fitText(value, font, Math.max(6, Math.min(13, fh * 0.6)), fw - 4, fh - 2)
+      const lead = size * 1.15
+      const firstBaseline = lines.length === 1
+        ? vy + (fh + size * 0.72) / 2
+        : vy + 1 + size * 0.9
+      lines.forEach((line, k) => drawText(line, vx + 2, firstBaseline + k * lead, size, font, rgb(0, 0, 0)))
     } else if (f.type === 'status') {
-      // Tri-state OK / Fail / N/A cell — draw the chosen value centred.
-      // Fixed size keeps all status labels visually uniform regardless of
-      // the individual cell height in the original document.
-      const value = String(f.value ?? '')
+      // Tri-state OK / Fail / N/A cell — draw the chosen value centred, at one
+      // size for every cell unless the cell is too small for it.
+      const value = safe(String(f.value ?? ''))
       if (!value) continue
-      const size = 10
+      let size = Math.min(10, fh * 0.75)
+      const w10 = fontBold.widthOfTextAtSize(value, size)
+      if (w10 > fw - 2) size = Math.max(4, size * (fw - 2) / w10)
       const tw = fontBold.widthOfTextAtSize(value, size)
-      drawText(value, vx + Math.max(1, (fw - tw) / 2), vy + (fh + size) / 2, size,
+      // A cell that held a printed tick box ("☐") has its answer written over
+      // the empty box, so the box is cleared first.
+      if (f.covers) {
+        const [rx, ry] = toUser(vx, vy + fh)
+        page.drawRectangle({ x: rx, y: ry, width: fw, height: fh, rotate, color: rgb(1, 1, 1) })
+      }
+      drawText(value, vx + Math.max(1, (fw - tw) / 2), vy + (fh + size * 0.72) / 2, size,
         fontBold, value === 'Fail' ? rgb(0.7, 0.1, 0.1) : rgb(0, 0, 0))
     } else if (f.type === 'checkgroup') {
       const size = 10
@@ -88,19 +106,60 @@ export async function bakePdf(originalBytes, fields, pageOrder) {
       }
     } else if (f.type === 'signature') {
       if (!f.value || !f.value.name) continue
+      const name = safe(f.value.name)
       const [rx, ry] = toUser(vx, vy + fh) // displayed bottom-left corner
       page.drawRectangle({
         x: rx, y: ry, width: fw, height: fh, rotate,
         borderColor: rgb(0.16, 0.22, 0.45), borderWidth: 1, color: rgb(0.96, 0.97, 1),
       })
       const nameSize = Math.max(9, Math.min(13, fh * 0.32))
-      drawText(f.value.name, vx + 5, vy + nameSize + 5, nameSize, fontBold, rgb(0.12, 0.16, 0.35))
-      drawText(`Signed: ${f.value.timestamp}`, vx + 5, vy + fh - 5, 8, font, rgb(0.3, 0.3, 0.3))
+      drawText(name, vx + 5, vy + nameSize + 5, nameSize, fontBold, rgb(0.12, 0.16, 0.35))
+      drawText(safe(`Signed: ${f.value.timestamp}`), vx + 5, vy + fh - 5, 8, font, rgb(0.3, 0.3, 0.3))
     }
     }
   }
 
   return await pdfDoc.save()
+}
+
+// The characters of `value` the font can draw; the common ones it cannot
+// are spelled out, anything else becomes "?".
+const SPELLED = { '✓': 'v', '✔': 'v', '✗': 'x', '✘': 'x', '≤': '<=', '≥': '>=', 'Ω': 'Ohm', '−': '-', '☐': '[ ]' }
+export function encodable(font, value) {
+  try { font.encodeText(value); return value } catch { /* one or more characters it lacks */ }
+  let out = ''
+  for (const ch of value) {
+    const alt = SPELLED[ch] ?? ch
+    try { font.encodeText(alt); out += alt } catch { out += '?' }
+  }
+  return out
+}
+
+// The largest size (from `size` down) at which `value` fits a box `maxW` wide
+// and `maxH` tall, wrapping at spaces onto as many lines as the height allows.
+export function fitText(value, font, size, maxW, maxH) {
+  const width = (t, s) => font.widthOfTextAtSize(t, s)
+  const wrap = (s) => {
+    const lines = []
+    for (const para of value.split(/\n/)) {
+      let line = ''
+      for (const word of para.split(/\s+/).filter(Boolean)) {
+        const next = line ? `${line} ${word}` : word
+        if (!line || width(next, s) <= maxW) line = next
+        else { lines.push(line); line = word }
+      }
+      lines.push(line)
+    }
+    return lines
+  }
+  for (let s = size; s >= 5; s -= 0.5) {
+    const lines = wrap(s)
+    if (lines.length * s * 1.15 <= Math.max(maxH, s * 1.15) && lines.every((l) => width(l, s) <= maxW)) return { size: s, lines }
+  }
+  // Still too long at the smallest size: one line, scaled to the width.
+  const one = value.replace(/\s+/g, ' ')
+  const w = width(one, 5) || 1
+  return { size: Math.max(3, Math.min(5, 5 * maxW / w)), lines: [one] }
 }
 
 // Create a single blank A4 page so users can try the tool without uploading a file.

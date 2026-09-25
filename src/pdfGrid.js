@@ -7,10 +7,23 @@ import { isStatusToken, isStatusHeaderToken, isRemarksToken, isReadingLabel, nor
 // ---------------------------------------------------------------------------
 
 // Build closed cell rectangles from the line grid (and keep explicit rects).
-// Reconstruction is done per horizontal band using only the vertical lines that
-// actually span that band, so an unrelated table's borders can't fragment a
-// grid's columns (and vice-versa).
-export function buildCells(hlines, vlines, rects, pw, ph) {
+//
+// A cell runs from a rule across its column down to the NEXT rule across that
+// same column — not to the next rule anywhere on the page. Pairing each rule
+// with the one after it in page order lost every cell that some other,
+// shorter line happened to cross: the underline of a clause link ("9.1.1",
+// "Refer to 5.1.15") inside the task column, the rows of a small table nested
+// in the Action Taken column, the split between two sub-rows beside a merged
+// "Grading (1-5)" cell. Each of those cut the band in two, neither half was
+// closed in the answer columns, and whole rows (B.2.2, B.2.7, B.2.8 on the
+// generator procedure; every row of the fuel procedure's Day Tank table)
+// opened with no boxes at all.
+//
+// The columns of a cell are the vertical rules that leave its top edge, so an
+// unrelated table's borders can't fragment a grid's columns (and vice-versa).
+// Rules are compared as the union of their collinear pieces, because a border
+// is usually drawn one cell at a time.
+export function buildCells(hlines, vlines, rects, pw, ph, texts = []) {
   const cells = []
   const seen = new Set()
   const push = (r) => {
@@ -23,20 +36,49 @@ export function buildCells(hlines, vlines, rects, pw, ph) {
 
   const ys = cluster(hlines.map((h) => h.y))
   const xsAll = cluster(vlines.map((v) => v.x))
-  const hAt = (y, x1, x2) => hlines.some((h) => Math.abs(h.y - y) <= 3 && h.x1 <= x1 + 3 && h.x2 >= x2 - 3)
-  const vSpan = (x, y1, y2) => vlines.some((v) => Math.abs(v.x - x) <= 3 && v.y1 <= y1 + 3 && v.y2 >= y2 - 3)
+  // Each clustered position's rules, merged into covered intervals.
+  const hRuns = ys.map((y) => mergeRuns(hlines.filter((h) => Math.abs(h.y - y) <= 3).map((h) => [h.x1, h.x2])))
+  const vRuns = xsAll.map((x) => mergeRuns(vlines.filter((v) => Math.abs(v.x - x) <= 3).map((v) => [v.y1, v.y2])))
+  const hAt = (j, x1, x2) => covers(hRuns[j], x1 + 3, x2 - 3)
+  const vSpan = (k, y1, y2) => covers(vRuns[k], y1 + 3, y2 - 3)
 
   for (let j = 0; j < ys.length - 1; j++) {
-    const y1 = ys[j], y2 = ys[j + 1]
-    if (y2 - y1 < 8) continue
-    const vs = xsAll.filter((x) => vSpan(x, y1, y2)) // only verticals bounding this band
-    for (let k = 0; k < vs.length - 1; k++) {
-      const x1 = vs[k], x2 = vs[k + 1]
-      if (hAt(y1, x1, x2) && hAt(y2, x1, x2)) push({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 })
+    const y1 = ys[j]
+    // the verticals that leave this rule downwards bound its columns
+    const vs = []
+    for (let k = 0; k < xsAll.length; k++) if (vSpan(k, y1, y1 + 8)) vs.push(k)
+    for (let a = 0; a < vs.length - 1; a++) {
+      const k1 = vs[a], k2 = vs[a + 1]
+      const x1 = xsAll[k1], x2 = xsAll[k2]
+      if (!hAt(j, x1, x2)) continue
+      for (let n = j + 1; n < ys.length; n++) {
+        const y2 = ys[n]
+        if (!vSpan(k1, y1, y2) || !vSpan(k2, y1, y2)) break // a side ends: not closed
+        if (!hAt(n, x1, x2)) continue // a line in some other column: look further down
+        // Closer than a row can be: a double rule, whose cell is found from
+        // its second line instead.
+        if (y2 - y1 >= 8) push({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 })
+        break
+      }
     }
   }
-  return dedupeCells(cells)
+  return dedupeCells(cells, texts)
 }
+
+// Merge [start, end] intervals that touch or nearly touch (a border drawn one
+// cell at a time leaves hairline gaps at the junctions).
+function mergeRuns(runs, gap = 3) {
+  const s = runs.map(([a, b]) => [Math.min(a, b), Math.max(a, b)]).sort((p, q) => p[0] - q[0])
+  const out = []
+  for (const r of s) {
+    const last = out[out.length - 1]
+    if (last && r[0] <= last[1] + gap) last[1] = Math.max(last[1], r[1])
+    else out.push([...r])
+  }
+  return out
+}
+
+const covers = (runs, lo, hi) => runs.some(([a, b]) => a <= lo && b >= hi)
 
 // Overlap area of two axis-aligned rectangles.
 function rectOverlap(a, b) {
@@ -58,7 +100,12 @@ function rectOverlap(a, b) {
 //      inside it — UNLESS the outer is a big table/section frame (much larger
 //      than a normal cell in BOTH axes), in which case it's not an input and we
 //      keep its children instead.
-export function dedupeCells(cells) {
+//
+// `texts` (optional) tells a placeholder from a nested table: a content
+// control sits in an EMPTY answer cell, so the cells inside a cell that holds
+// text ("Where applicable, record the following values:" over a small
+// reading table) are real cells and are kept.
+export function dedupeCells(cells, texts = []) {
   const area = (c) => c.w * c.h
   // pass 1 — near-identical duplicates (process largest-first, keep the first).
   const uniq = []
@@ -108,10 +155,11 @@ export function dedupeCells(cells) {
     && children[i].reduce((s, j) => s + area(uniq[j]), 0) >= 0.8 * area(uniq[i])
   const isContainer = (i) => isTiled(i)
     || (isFrame(uniq[i]) && uniq.some((o, j) => j !== i && contains(uniq[i], o)))
+  const holdsText = (i) => texts.length > 0 && cellHasText(uniq[i], texts)
   return uniq.filter((c, i) => {
     if (isContainer(i)) return false // table/section frame or a shading band
-    // a nested cell whose container is a normal cell is a placeholder → drop it
-    if (parent[i] >= 0 && !isContainer(parent[i])) return false
+    // a nested cell whose container is a normal, empty cell is a placeholder
+    if (parent[i] >= 0 && !isContainer(parent[i]) && !holdsText(parent[i])) return false
     return true
   })
 }
@@ -151,11 +199,14 @@ export function cellHasText(c, texts) {
   return false
 }
 
-// Upper bound on fields from a single page. A real form page tops out around a
-// hundred; anything past this is a misread of a dense graphic, and placing
-// hundreds of boxes on one page would make it unusable. Applied PER PAGE so a
-// single odd page can never cost the rest of the document its fields.
-const MAX_FIELDS_PER_PAGE = 250
+// Upper bound on fields from a single page, against a misread of a dense
+// graphic. It has to clear the densest real form: the generator procedure's
+// performance test run table is 12 reading columns by 43 rows — 516 boxes on
+// one page. A cap of 250 stopped halfway through it, and because the cells
+// arrive in no particular order the missing half was every shaded row, the
+// Time row and the fuel lines under the table. Applied PER PAGE so a single
+// odd page can never cost the rest of the document its fields.
+export const MAX_FIELDS_PER_PAGE = 1200
 
 // A box shorter than a line of type cannot be written in — it is a rule, a
 // spacer or the gap between two table borders, never an input.
@@ -185,7 +236,10 @@ export function detectPageFields({ cells, texts, hlines = [], pw, ph, pageIndex,
     if (taken({ x: f.xPct * pw, y: f.yPct * ph, w: f.wPct * pw, h: f.hPct * ph })) return
     out.push(f)
   }
-  if (cells.length >= 4) for (const f of promptFields(cells, texts, pw, ph, pageIndex)) add(f)
+  if (cells.length >= 4) {
+    for (const f of glyphCellFields(cells, texts, pw, ph, pageIndex)) add(f)
+    for (const f of promptFields(cells, texts, pw, ph, pageIndex)) add(f)
+  }
   for (const f of blankLineFields(texts, hlines, cells, pw, ph, pageIndex)) add(f)
   return out
 }
@@ -218,13 +272,45 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   // A cell is "occupied" by a picture when the picture covers most of it — a
   // framed logo, a diagram in a bordered panel. Those read as empty boxes to
   // the line grid, because the only thing inside them is an image.
+  // So is a cell with an icon in it — the hazard triangle beside each
+  // safety warning is a picture a quarter of its cell wide, sitting wholly
+  // inside it.
   const holdsImage = (c) => images.some((im) => {
     const ox = Math.min(im.x + im.w, c.x + c.w) - Math.max(im.x, c.x)
     const oy = Math.min(im.y + im.h, c.y + c.h) - Math.max(im.y, c.y)
     if (ox <= 0 || oy <= 0) return false
-    return (ox * oy) >= (c.w * c.h) * 0.55
+    if ((ox * oy) >= (c.w * c.h) * 0.55) return true
+    return ox * oy >= 0.8 * im.w * im.h && (im.w >= c.w * 0.25 || im.h >= c.h * 0.25)
   })
   const rowLabelFor = rowLabelLookup(cells, texts, textIn)
+  // A caption printed just above a box that stands on its own — "Comments:"
+  // over the comments box under the fuel inventory record.
+  const captionAbove = (c) => {
+    const t = texts
+      .filter((o) => o.yTop < c.y + 1 && o.yTop > c.y - 18 && o.x >= c.x - 6 && o.x < c.x + c.w / 2 && norm(o.str).length <= 40)
+      .sort((a, b) => b.yTop - a.yTop)[0]
+    return t ? norm(t.str).replace(/:$/, '') : ''
+  }
+
+  // A gutter: a blank cell with no heading that runs down beside a whole
+  // stack of rows — the outer table's margin columns either side of a list
+  // nested inside it, or a label column continued blank onto the next page.
+  // An answer cell that spans several rows (the "Grading (1-5)" cell beside
+  // its two sub-rows) always has its heading above it.
+  const medH = medianOf(cells.map((c) => c.h)) || 20
+  const isGutter = (c) => {
+    if (c.h < medH * 4 || headerFor(c)) return false
+    const rows = new Set()
+    for (const o of cells) {
+      if (o === c || o.h > c.h * 0.6) continue
+      const cy = o.y + o.h / 2
+      if (cy <= c.y || cy >= c.y + c.h) continue
+      const left = o.x + o.w <= c.x + 2 && o.x + o.w >= c.x - 12
+      const right = o.x >= c.x + c.w - 2 && o.x <= c.x + c.w + 12
+      if (left || right) rows.add(Math.round(cy / 4))
+    }
+    return rows.size >= 4
+  }
 
   for (const c of cells) {
     // skip cells that already contain text (labels / printed codes / values)
@@ -234,6 +320,7 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     // skip what is physically not a box to write in
     if (c.h < MIN_CELL_H) continue
     if (holdsImage(c)) continue
+    if (isGutter(c)) continue
 
     // status if the column is narrow, or a narrow-ish column has a status header
     // (OK/Fail or 1M/3M/6M/1Y) directly above it. The header must be a real
@@ -277,6 +364,15 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     // on the column ("Result", "Pass/Fail", "1M") still wins: a task that
     // mentions a temperature is still a task to be checked off.
     const asksForFigure = !statusHeading && (isReadingLabel(heading) || isReadingLabel(rowLabel))
+    // A column that asks for a grade on a printed scale — the condition
+    // monitoring matrix's "Grading (1-5)" — taps through that scale, like
+    // an OK / N/A / Fail cell, instead of waiting for a typed digit.
+    const scale = !statusHeading ? (gradeScale(heading) || gradeScale(rowLabel)) : null
+    if (scale) {
+      out.push(mkField('status', pageIndex, c, pw, ph, scaleLabel(heading, rowLabel), scale))
+      if (out.length >= MAX_FIELDS_PER_PAGE) break
+      continue
+    }
     let type = statusHeading || (narrow && !asksForFigure) ? 'status' : 'text'
 
     if (type === 'text' && /signature/i.test(rowLabel)) type = 'signature'
@@ -292,7 +388,7 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     const label = type === 'status'
       ? 'Result'
       : ((isReadingLabel(heading) && !isReadingLabel(rowLabel) ? heading : '')
-        || rowLabel || heading || (type === 'signature' ? 'Signature' : 'Entry'))
+        || rowLabel || heading || captionAbove(c) || (type === 'signature' ? 'Signature' : 'Entry'))
 
     // A status cell carries the wording its own column asks for, so a
     // "Pass/Fail" column cycles Pass → N/A → Fail rather than stamping "OK"
@@ -376,41 +472,114 @@ const PROMPT_RX = /^(?:record|enter|note|write|state|specify|list|measure|indica
 function promptFields(cells, texts, pw, ph, pageIndex) {
   const out = []
   const pad = 1.5
+  const sameRow = (a, b) => Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) >= 0.5 * Math.min(a.h, b.h)
+  const rightOf = (c) => cells.find((o) => o !== c && Math.abs(o.x - (c.x + c.w)) <= 2 && sameRow(o, c))
+  // A column of labels: every other cell in it is a label too ("Instrument
+  // reading:", "HMI reading:", "Dip reading:" down a label | value table).
+  const labelColumn = (c) => {
+    const column = cells.filter((o) => o !== c && o.h >= MIN_CELL_H
+      && Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= 0.8 * Math.min(o.w, c.w)
+      && Math.abs(o.w - c.w) <= 0.25 * c.w)
+    return column.length > 0 && column.every((o) => {
+      const t = textInside(o, texts)
+      return t && /:$/.test(t) && t.length <= 40
+    })
+  }
   for (const c of cells) {
     if (c.h < MIN_CELL_H) continue
-    const inside = texts.filter((t) => {
-      const th = t.h || 9
-      const tcx = (t.x + t.xr) / 2, tcy = t.yTop - th * 0.3
-      return tcx > c.x && tcx < c.x + c.w && tcy > c.y && tcy < c.y + c.h
-    }).sort((a, b) => a.yTop - b.yTop || a.x - b.x)
+    const inside = tokensInside(c, texts)
     if (!inside.length) continue
-    // A prompt cell has something to its left on its row (a task, a clause
-    // number) — the leftmost column of a table describes rows, it never
-    // prompts for an answer beside itself.
-    if (!texts.some((t) => t.xr <= c.x + 2 && t.yTop > c.y && t.yTop < c.y + c.h)) continue
+    // A label with its answer cell right beside it ("HMI reading: | ____")
+    // needs nothing more: the empty cell next door has its own box, and a
+    // second one squeezed in after the label was two boxes for one reading.
+    const next = rightOf(c)
+    if (next && !cellHasText(next, texts)) continue
+    // The leftmost column of a table describes its rows; with an answer
+    // column beside it, it never prompts for an answer inside itself.
+    const hasLeft = texts.some((t) => t.xr <= c.x + 2 && t.yTop > c.y && t.yTop < c.y + c.h)
+    if (!hasLeft && next) continue
+    if (labelColumn(c)) continue
     const paras = paragraphsOf(inside)
-    if (paras.length > 4 || !paras.every((p) => PROMPT_RX.test(p.text) && p.text.length <= 40)) continue
+    if (paras.length > 4 || !paras.every((p) => isPrompt(p.text))) continue
 
     for (let i = 0; i < paras.length; i++) {
       const p = paras[i]
       const label = p.text.replace(/:$/, '')
       const lineH = Math.max(p.h * 1.5, MIN_CELL_H)
-      // To the right of the prompt's last line, if it leaves room to write.
+      // Down to the next prompt, or to the cell's bottom edge.
+      const bottom = paras[i + 1] ? paras[i + 1].yTop - paras[i + 1].h - 2 : c.y + c.h - pad
+      // To the right of the prompt's last line, if it leaves room to write,
+      // and on down through any blank space under it ("Comments:" at the top
+      // of a tall cell).
       const right = c.x + c.w - pad
       const free = right - (p.xr + 3)
       if (free >= 40) {
         const y = Math.max(c.y + pad, p.yBottom - lineH * 0.9)
-        out.push(mkField('text', pageIndex, { x: p.xr + 3, y, w: free, h: Math.min(lineH, c.y + c.h - pad - y) }, pw, ph, label, [], 0))
+        out.push(mkField('text', pageIndex, { x: p.xr + 3, y, w: free, h: Math.max(Math.min(lineH, c.y + c.h - pad - y), bottom - y) }, pw, ph, label, [], 0))
         continue
       }
-      // Otherwise the blank band under it, down to the next prompt or the
-      // cell's bottom edge.
+      // Otherwise the blank band under it.
       const top = p.yBottom + 2
-      const bottom = paras[i + 1] ? paras[i + 1].yTop - paras[i + 1].h - 2 : c.y + c.h - pad
       if (bottom - top >= MIN_CELL_H) {
         out.push(mkField('text', pageIndex, { x: c.x + pad, y: top, w: c.w - pad * 2, h: bottom - top }, pw, ph, label, [], 0))
       }
     }
+  }
+  return out
+}
+
+// A printed prompt: an instruction to write ("Record water added") or a
+// caption ending in a colon ("Start batteries:", "Fault Number if required:"),
+// short enough to be a label. A task that ends by introducing a list ("Check
+// tank for water. Either:", "Inspect starter motor as follows:") is not one.
+function isPrompt(text) {
+  if (!PROMPT_RX.test(text) || text.length > 40) return false
+  if (/\.\s/.test(text)) return false
+  return !/\b(?:follows|following|either|below|include[sd]?|including|taken|values|steps)\s*:$/i.test(text)
+}
+
+// The tokens whose centre sits inside a cell, in reading order, and their text.
+function tokensInside(c, texts) {
+  return texts.filter((t) => {
+    const th = t.h || 9
+    const tcx = (t.x + t.xr) / 2, tcy = t.yTop - th * 0.3
+    return tcx > c.x && tcx < c.x + c.w && tcy > c.y && tcy < c.y + c.h
+  }).sort((a, b) => a.yTop - b.yTop || a.x - b.x)
+}
+const textInside = (c, texts) => norm(tokensInside(c, texts).map((t) => t.str).join(' '))
+
+// Boxes in cells that hold only a printed unit or a tick-box glyph.
+//
+// A reading cell often carries its unit, right-aligned — "R: | ______ V",
+// "Sec", "kPa" — and a tick cell carries an empty box character "☐". Either
+// way the printed glyph made the cell read as filled, so the answer the form
+// asks for had nowhere to go. A unit gets a typing box in the space before it;
+// a tick box becomes an OK / N/A / Fail tap-cell.
+const UNIT_RX = /^(?:v|a|w|kw|kva|va|hz|rpm|sec|secs|s|min|mins|hrs?|h|%|°c|ºc|c|kpa|bar|psi|l|litres?|ml|mm|m|kg|ohms?|Ω|mΩ|mv|ma|db)$/i
+const TICK_RX = /^[\u2610\u2611\u2612\u25a1\u25a2\u274f\u2750\u2751\u2752\uf06f\uf0a8]$/
+
+export function glyphCellFields(cells, texts, pw, ph, pageIndex) {
+  const out = []
+  const pad = 1.5
+  for (const c of cells) {
+    if (c.h < MIN_CELL_H) continue
+    const inside = tokensInside(c, texts)
+    if (inside.length !== 1) continue
+    const t = inside[0]
+    const str = norm(t.str)
+    if (TICK_RX.test(str)) {
+      out.push({ ...mkField('status', pageIndex, c, pw, ph, 'Result'), covers: true })
+      continue
+    }
+    if (!UNIT_RX.test(str)) continue
+    // the unit sits at the right of its cell, with room to write before it
+    const free = t.x - 2 - (c.x + pad)
+    if (free < 18 || t.x < c.x + c.w * 0.5) continue
+    const left = texts
+      .filter((o) => o.xr <= c.x + 2 && Math.abs(o.yTop - t.yTop) <= Math.max(o.h, t.h) * 0.6)
+      .sort((a, b) => b.xr - a.xr)[0]
+    const label = norm(`${left ? left.str.replace(/:$/, '') : 'Reading'} (${str})`)
+    out.push(mkField('text', pageIndex, { x: c.x, y: c.y, w: free + pad, h: c.h }, pw, ph, label))
   }
   return out
 }
@@ -469,14 +638,18 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
   const stripBlank = (s) => s.replace(BLANK_RUNS(), ' ').replace(/[:\s]+$/, '')
 
   // The label of a blank starting at x on a baseline: the words to its left on
-  // that line (its own token's prefix, then the tokens before it while the
-  // gaps are small), else a short caption just above its left end.
-  const labelFor = (tok, prefix, x) => {
+  // that line (its own token's prefix, then — for the first blank in the
+  // token — the tokens before it while the gaps are small), else a short
+  // caption just above its left end. `prefix` is only the text since the
+  // previous blank in the same token: "Genset:....... Work Order Number:......"
+  // is one token, and its second box is "Work Order Number", not "Genset:
+  // Work Order Number".
+  const labelFor = (tok, prefix, x, first) => {
     const parts = [stripBlank(prefix)]
     let edge = tok.x
-    const before = texts
+    const before = first ? texts
       .filter((t) => t !== tok && byLine(t, tok) && t.xr <= edge + 1)
-      .sort((a, b) => b.xr - a.xr)
+      .sort((a, b) => b.xr - a.xr) : []
     for (const t of before) {
       if (edge - t.xr > 14) break
       // a token that is, or ends in, another blank belongs to that blank
@@ -494,8 +667,18 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
     return above ? stripBlank(above.str) : ''
   }
 
+  // The ruled cell a point sits in, so a box on a typed line inside a table
+  // row stays inside that row's borders.
+  const cellAt = (x, y) => cells.find((c) => x > c.x && x < c.x + c.w && y > c.y && y < c.y + c.h)
+  const clampTo = (box, c) => {
+    if (!c) return box
+    const x = Math.max(box.x, c.x + 1), y = Math.max(box.y, c.y + 1)
+    const x2 = Math.min(box.x + box.w, c.x + c.w - 1), y2 = Math.min(box.y + box.h, c.y + c.h - 1)
+    return { x, y, w: x2 - x, h: y2 - y }
+  }
+
   const push = (box, label) => {
-    if (box.w < 18 || box.h < 8) return
+    if (box.w < 10 || box.h < 8) return
     const type = /signature|signed/i.test(label) ? 'signature' : 'text'
     out.push(mkField(type, pageIndex, box, pw, ph, label || 'Entry', [], 0))
   }
@@ -506,18 +689,31 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
     const str = t.str
     const runs = BLANK_RUNS()
     let m
+    let lastEnd = 0 // where the previous blank in this token ended
     while ((m = runs.exec(str))) {
-      const [x1, x2] = runExtent(str, m.index, m.index + m[0].length, t.x, t.xr)
+      const from = lastEnd
+      lastEnd = m.index + m[0].length
+      const [rx1, x2] = runExtent(str, m.index, m.index + m[0].length, t.x, t.xr)
+      // Where a label runs straight into the blank ("location........"), start
+      // a hair late: the estimate is proportional, and a box over the label's
+      // last letter reads as misplaced where one a point short does not.
+      const x1 = m.index > 0 && /\S$/.test(str.slice(0, m.index)) ? rx1 + Math.min(1.5, t.h * 0.15) : rx1
       const w = x2 - x1
       // An ellipsis inside prose is three dots wide; a write-on line is not.
-      if (w < 18) continue
+      // Underscores are never prose, so a short run of them still counts.
+      if (w < (/_{3}/.test(m[0]) ? 10 : 18)) continue
       const after = str.slice(m.index + m[0].length)
-      const beforeTxt = str.slice(0, m.index)
-      // A run wedged between two words is a compound word's hyphen, not a line.
-      if (/\w$/.test(beforeTxt) && /^\w/.test(after) && after.length > 8) continue
+      const beforeTxt = str.slice(from, m.index)
+      // A run wedged between two words is a compound word's hyphen, not a line
+      // — nor is a run inside a code with no spaces in it: the fuel
+      // procedure's site lists are full of SAP locations like
+      // "AD__-ASAC-TMC_-____-AIU___", and each one sprouted a box.
+      const wedged = /\w$/.test(beforeTxt) && /^\w/.test(after)
+      if (wedged && (after.length > 8 || m[0].length <= 4 || !/\s/.test(str))) continue
       const h = Math.max(t.h * 1.35, MIN_CELL_H)
-      const label = labelFor(t, beforeTxt, x1)
-      push({ x: x1, y: t.yTop + t.h * 0.3 - h, w, h }, label)
+      const label = labelFor(t, beforeTxt, x1, from === 0)
+      const host = cellAt((x1 + x2) / 2, t.yTop - t.h * 0.3)
+      push(clampTo({ x: x1, y: t.yTop + t.h * 0.3 - h, w, h }, host), label)
       // a typed line is one a drawn rule below it can chain from
       placed.push({ y: t.yTop + t.h * 0.3, x1, x2, label })
     }
@@ -532,6 +728,10 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
   for (const l of [...hlines].sort((a, b) => a.y - b.y || a.x1 - b.x1)) {
     if (l.x2 - l.x1 < 60 || l.x1 < 0 || l.x2 > pw) continue
     if (l.x2 - l.x1 > pw * 0.95) continue // page frame
+    // The rule under a running header or over a footer: a margin-to-margin
+    // line in the top or bottom tenth of the page. With a "Remarks/Derating:"
+    // line just above the footer it read as the next line of the remarks.
+    if (l.x2 - l.x1 > pw * 0.6 && (l.y < ph * 0.1 || l.y > ph * 0.9)) continue
     if (edgeOf(l)) continue
     // the same rule drawn twice (both edges of a hairline rectangle)
     if (rules.some((r) => Math.abs(r.y - l.y) <= 2 && Math.abs(r.x1 - l.x1) <= 4 && Math.abs(r.x2 - l.x2) <= 4)) continue
@@ -544,16 +744,23 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
   const lineH = 13
   for (const l of rules) {
     let label = ''
-    // (a) a label on the line, to its left
-    const beside = texts
-      .filter((t) => t.yTop <= l.y + 3 && t.yTop >= l.y - lineH * 1.2 && t.xr <= l.x1 + 4 && t.xr >= l.x1 - 60)
-      .sort((a, b) => b.xr - a.xr)[0]
+    // (a) a label on the line, to its left: right beside it, or — when it is
+    // a caption ending in a colon — out in a label column at the margin. "Site:"
+    // on the fuel inventory record sits 100pt left of where its line starts
+    // (the lines all start at one tab stop), so it was the one line on the
+    // page with no box.
+    const onLine = texts.filter((t) => t.yTop <= l.y + 3 && t.yTop >= l.y - lineH * 1.2 && t.xr <= l.x1 + 4)
+      .sort((a, b) => b.xr - a.xr)
+    const beside = onLine.find((t) => t.xr >= l.x1 - 60)
+      || (onLine[0] && onLine[0].xr >= l.x1 - pw * 0.4 && /:$/.test(onLine[0].str) ? onLine[0] : null)
     if (beside) label = stripBlank(beside.str)
-    // (b) a caption above the left end
+    // (b) a caption above the left end — not one that carries a blank of its
+    // own, which is already its line
     if (!label) {
       const above = texts
         .filter((t) => t.yTop < l.y - 2 && t.yTop > l.y - lineH * 3.2 && t.x < l.x1 + 40 && t.xr > l.x1 - 10
-          && norm(t.str).length <= 40 && (/:$/.test(t.str) || isRemarksToken(t.str) || /signature|signed|name|date/i.test(t.str)))
+          && norm(t.str).length <= 40 && !BLANK_RUN.test(t.str)
+          && (/:$/.test(t.str) || isRemarksToken(t.str) || /signature|signed|name|date/i.test(t.str)))
         .sort((a, b) => b.yTop - a.yTop)[0]
       if (above) label = stripBlank(above.str)
     }
@@ -564,28 +771,48 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
       if (chained) label = chained.label
     }
     if (!label) continue
-    const prev = placed.filter((p) => p.y < l.y && Math.min(p.x2, l.x2) - Math.max(p.x1, l.x1) > 8).sort((a, b) => b.y - a.y)[0]
-    const h = prev ? Math.min(lineH, l.y - prev.y - 1) : lineH
-    push({ x: l.x1, y: l.y - h, w: l.x2 - l.x1, h }, label)
+    // The box rises from the line to the top of the label beside it, so it
+    // sits level with the words it answers. LibreOffice sets these lines a
+    // good way under the text (a paragraph's bottom border, below its
+    // spacing), and a box one line-height tall on the rule sat half a row
+    // below its label. It never reaches past the line above.
+    let top = l.y - lineH
+    if (beside) top = Math.min(top, beside.yTop - beside.h * 0.95)
+    const prev = [...placed.map((p) => ({ y: p.y, x1: p.x1, x2: p.x2 })), ...rules]
+      .filter((p) => p.y < l.y - 2 && Math.min(p.x2, l.x2) - Math.max(p.x1, l.x1) > 8)
+      .sort((a, b) => b.y - a.y)[0]
+    if (prev) top = Math.max(top, prev.y + 1.5)
+    top = Math.max(top, l.y - lineH * 2)
+    push({ x: l.x1, y: top, w: l.x2 - l.x1, h: l.y - top }, label)
     placed.push({ y: l.y, x1: l.x1, x2: l.x2, label })
   }
   return out
 }
 
+// Advance widths (hundredths of an em) of printable ASCII, space to tilde:
+// the average of Noto Sans and DejaVu Sans, the faces LibreOffice sets these
+// procedures in (the in-page engine and the converter respectively, standing
+// in for Verdana). Only the proportions matter — the estimate is scaled to
+// the token's measured width — but a coarse narrow/wide split put the start
+// of "Work Order Number:......" a character early, over the label's last
+// letters.
+const ASCII_W = ('29 33 43 74 60 89 76 25 35 35 53 70 29 34 29 35 60 60 60 60 60 60 60 60 60 60 30 30 70 70 70 48 '
+  + '95 66 67 67 75 59 55 75 75 32 28 64 54 88 75 78 60 78 66 59 58 73 64 96 64 59 63 36 35 36 70 47 '
+  + '39 59 62 51 62 59 35 62 63 27 27 56 27 95 63 61 62 62 41 50 38 63 55 80 56 55 50 51 44 51 70')
+  .split(' ').map((n) => Number(n) / 100)
+
 // Where the characters [from, to) of a token fall along it. pdf.js gives the
 // token's overall extent only, so the position is estimated from the glyph
-// shapes: a dot or a colon is narrow, an underscore or a capital is wide, and
-// the estimate is scaled so the whole string fits the measured width.
+// widths and scaled so the whole string fits the measured width.
 export function runExtent(str, from, to, x, xr) {
   const wOf = (ch) => {
-    if (/[.,:;'!|il]/.test(ch)) return 0.28
-    if (/[ Ijtfr]/.test(ch)) return 0.35
-    if (ch === '-' || ch === '‐' || ch === '‑') return 0.36
-    if (ch === '_' || ch === '–') return 0.5
-    if (ch === '—' || ch === '…') return 1
-    if (/[A-Z]/.test(ch)) return 0.68
-    if (/[mwMW]/.test(ch)) return 0.85
-    return 0.53
+    const c = ch.codePointAt(0)
+    if (c >= 32 && c <= 126) return ASCII_W[c - 32]
+    if (ch === '‐' || ch === '‑') return 0.34
+    if (ch === '–' || ch === '‒') return 0.5
+    if (ch === '—' || ch === '…') return 0.95
+    if (ch === '·') return 0.29
+    return 0.6
   }
   const widths = [...str].map(wOf)
   const total = widths.reduce((s, w) => s + w, 0) || 1
@@ -663,6 +890,18 @@ function mergeSplitCells(cells, texts) {
 function statusCycleFor(heading) {
   return /pass/i.test(heading || '') ? ['Pass', 'N/A', 'Fail'] : []
 }
+
+// The grades a "Grading (1-5)" / "Score 1 to 10" label asks for, or null.
+export function gradeScale(label) {
+  const t = norm(label)
+  if (!t || t.length > 40 || !/grad(?:e|ing)|score|rating|scale/i.test(t)) return null
+  const m = t.match(/(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})/i)
+  if (!m) return null
+  const lo = Number(m[1]), hi = Number(m[2])
+  if (!(hi > lo) || hi - lo > 9) return null
+  return Array.from({ length: hi - lo + 1 }, (_, i) => String(lo + i))
+}
+const scaleLabel = (heading, rowLabel) => (gradeScale(heading) ? heading : rowLabel) || 'Grade'
 
 // Recognise the blank cells in a table's TOP row that are there to caption the
 // row-label column rather than to be filled in.

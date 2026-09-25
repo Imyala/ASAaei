@@ -23,7 +23,7 @@ for (let p = 1; p <= pdf.numPages; p++) {
   const [opList, textContent] = await Promise.all([page.getOperatorList(), page.getTextContent()])
   const geo = collectGeometry(opList, toVP, pdfjsLib)
   const texts = textTokens(textContent.items, toVP)
-  const cells = buildCells(geo.hlines, geo.vlines, geo.rects, vp.width, vp.height)
+  const cells = buildCells(geo.hlines, geo.vlines, geo.rects, vp.width, vp.height, texts)
   const fields = detectPageFields({ cells, texts, hlines: geo.hlines, pw: vp.width, ph: vp.height, pageIndex: p - 1, images: geo.images })
   console.log(`\n=== page ${p}  ${r(vp.width)}x${r(vp.height)}  rects=${geo.rects.length} h=${geo.hlines.length} v=${geo.vlines.length} cells=${cells.length} fields=${fields.length}`)
   for (const f of fields) {

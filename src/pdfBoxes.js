@@ -53,7 +53,7 @@ export async function detectPageBoxes(page, pageIndex, lib) {
   const toVP = (x, y) => vp.convertToViewportPoint(x, y)
   const [opList, textContent] = await Promise.all([page.getOperatorList(), page.getTextContent()])
   const { hlines, vlines, rects, images } = collectGeometry(opList, toVP, lib)
-  const cells = buildCells(hlines, vlines, rects, pw, ph)
   const texts = textTokens(textContent.items, toVP)
+  const cells = buildCells(hlines, vlines, rects, pw, ph, texts)
   return detectPageFields({ cells, texts, hlines, pw, ph, pageIndex, images })
 }

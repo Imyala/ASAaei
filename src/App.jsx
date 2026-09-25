@@ -49,6 +49,7 @@ const statusClass = (v) => {
   const s = String(v)
   if (/^(ok|pass)$/i.test(s)) return 'OK'
   if (/^fail$/i.test(s)) return 'Fail'
+  if (/^\d+$/.test(s)) return 'val' // a grade on a printed scale
   return 'NA'
 }
 
@@ -583,6 +584,15 @@ export default function App() {
     next.has(i) ? next.delete(i) : next.add(i)
     return next
   })
+  // The pages that have tap-cells at all, and whether every one of them is
+  // set to typing — which is what the toolbar's "Type on all pages" shows.
+  const tapPages = [...new Set(fields.filter((f) => f.type === 'status').map((f) => f.page))]
+  const typingEverywhere = tapPages.length > 0 && tapPages.every((p) => manualPages.has(p))
+  // One switch for the whole document: every OK / N/A / Fail cell on every
+  // page becomes a box to type in (or all go back to tapping). The per-page
+  // switch still overrides it one page at a time.
+  const toggleTypingEverywhere = () =>
+    setManualPages(typingEverywhere ? new Set() : new Set(tapPages))
   const pagesWithFields = () => new Set(fields.map((f) => f.page))
 
   // ================= OPENING A DOCUMENT =================
@@ -841,6 +851,16 @@ export default function App() {
         </div>
 
         <div className="group right">
+          {tapPages.length > 0 && (
+            <button className={'typeall' + (typingEverywhere ? ' on' : '')} onClick={toggleTypingEverywhere}
+              aria-pressed={typingEverywhere}
+              title={typingEverywhere
+                ? 'Go back to tapping OK / N/A / Fail on every page'
+                : 'Type into every OK / N/A / Fail box, on every page'}>
+              <span className="typeall-key" aria-hidden="true">123</span>
+              {typingEverywhere ? 'Typing on all pages' : 'Type on all pages'}
+            </button>
+          )}
           {pages.length > 1 && (
             <button className={showPages ? 'on' : ''} onClick={() => setShowPages((v) => !v)}>
               Pages <span className="count">{selectedPages.size}/{pages.length}</span>
@@ -944,7 +964,7 @@ export default function App() {
                   </label>
                 )}
                 {fields.filter((f) => f.page === i).map((f) => (
-                  <FieldView key={f.id} field={f} mode={mode} tool={tool} locked={locked}
+                  <FieldView key={f.id} field={f} aspect={pg.pxHeight / pg.pxWidth} mode={mode} tool={tool} locked={locked}
                     selected={f.id === selectedId} manual={manualPages.has(i)} onSelect={() => setSelectedId(f.id)}
                     onChange={(patch) => updateField(f.id, patch)} onSign={() => signField(f)}
                     onPointerDown={(e) => onFieldPointerDown(e, f, e.currentTarget.closest('[data-page]'))} />
@@ -999,6 +1019,15 @@ function ConvertTimer({ startedAt, pct, stageChangedAt }) {
   )
 }
 
+// Whether a box is wide enough to show its label as a hint. Twelve narrow
+// columns of "Volta" "Volta" "Volta" across the performance test run table
+// said nothing the row label beside them does not; the label is still the
+// box's tooltip.
+function hintFits(f) {
+  const label = String(f.label || '')
+  return f.wPct >= 0.09 || label.length <= 8
+}
+
 function clamp(v, lo, hi) {
   v = Number(v)
   if (Number.isNaN(v)) v = lo
@@ -1006,10 +1035,15 @@ function clamp(v, lo, hi) {
 }
 
 // ---- one field, rendered on the page -------------------------------------
-function FieldView({ field: f, mode, tool, locked, selected, manual, onSelect, onChange, onSign, onPointerDown }) {
+function FieldView({ field: f, aspect = 1.414, mode, tool, locked, selected, manual, onSelect, onChange, onSign, onPointerDown }) {
+  // The type is sized from the box itself (a share of its height, in units
+  // of the page's width), so a value fits its cell at any zoom — a fixed 13px
+  // overflowed the performance test run table's short rows on a phone and
+  // looked lost in the tall ones on a desktop. styles.css clamps it.
   const style = {
     left: `${f.xPct * 100}%`, top: `${f.yPct * 100}%`,
     width: `${f.wPct * 100}%`, height: `${f.hPct * 100}%`,
+    '--fh': `${(f.hPct * aspect * 100).toFixed(3)}cqw`,
   }
   const designMove = mode === 'design' && tool === 'select' && !locked
   const cls = `field ${f.type}${selected ? ' selected' : ''}${designMove ? ' movable' : ''}`
@@ -1026,9 +1060,13 @@ function FieldView({ field: f, mode, tool, locked, selected, manual, onSelect, o
   }
   return (
     <div className={cls} style={style} onClick={(e) => e.stopPropagation()}>
-      {f.type === 'text' && (
-        <input className="ctl" value={f.value} disabled={readOnly}
-          placeholder={f.label} onChange={(e) => onChange({ value: e.target.value })} />
+      {/* A box two or more lines tall (Action Taken, Remarks, Comments) takes
+          several lines, which the download wraps inside it the same way. */}
+      {f.type === 'text' && (f.hPct * aspect > 0.045
+        ? <textarea className="ctl area" value={f.value} disabled={readOnly} title={f.label}
+            placeholder={hintFits(f) ? f.label : ''} onChange={(e) => onChange({ value: e.target.value })} />
+        : <input className="ctl" value={f.value} disabled={readOnly} title={f.label}
+            placeholder={hintFits(f) ? f.label : ''} onChange={(e) => onChange({ value: e.target.value })} />
       )}
       {f.type === 'dropdown' && (
         <select className="ctl" value={f.value} disabled={readOnly}
@@ -1041,9 +1079,11 @@ function FieldView({ field: f, mode, tool, locked, selected, manual, onSelect, o
         // When the page is in manual-entry mode, a status cell becomes a plain
         // text box so figures (readings, measurements) can be typed instead of
         // tapping OK / N/A / Fail.
+        // Any keyboard, not the number pad: a typed status is as often "OK",
+        // "N/A" or a note as it is a figure.
         manual ? (
-          <input className="ctl" value={String(f.value ?? '')} disabled={readOnly}
-            inputMode="numeric" placeholder={f.label && f.label !== 'Result' ? f.label : ''}
+          <input className="ctl" value={String(f.value ?? '')} disabled={readOnly} title={f.label}
+            placeholder={f.label && f.label !== 'Result' && hintFits(f) ? f.label : ''}
             onChange={(e) => onChange({ value: e.target.value })} />
         ) : (
           <button className={'statuscell ' + statusClass(f.value)}

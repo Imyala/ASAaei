@@ -18,12 +18,15 @@ const RX = {
 
 export const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
 
+// Footnote marks trailing a heading ("1M±", "3M**", "Result†").
+const stripMarks = (s) => s.replace(/[*±†‡#^~+]+$/, '')
+
 // Classify a column/header label. Returns 'status' | 'text' | ''.
 export function classifyHeader(text) {
   const t = norm(text)
   if (!t) return ''
   if (RX.remarks.test(t)) return 'text'
-  if (RX.freq.test(t.replace(/\s/g, ''))) return 'status'
+  if (RX.freq.test(stripMarks(t.replace(/\s/g, '')))) return 'status'
   if (RX.status.test(t)) return 'status'
   if (RX.textish.test(t)) return 'text'
   return ''
@@ -31,8 +34,13 @@ export function classifyHeader(text) {
 
 // True for a single token that on its own marks a status/result column
 // (a frequency code like "3M"/"1Y", or an OK/Fail/N/A word).
+//
+// A frequency code often carries a footnote mark — "1M±", "3M**", "6M†" —
+// pointing at a note under the table. The mark is dropped before matching:
+// with it, the Day Tank table's 1M and 3M columns read as ordinary text
+// columns and got typing boxes instead of OK / N/A / Fail tap-cells.
 export function isStatusToken(text) {
-  const t = norm(text).replace(/\s/g, '')
+  const t = stripMarks(norm(text).replace(/\s/g, ''))
   if (!t) return false
   if (RX.freq.test(t)) return true
   return /^(ok|fail|n\/?a|pass|result)$/i.test(t)
@@ -51,8 +59,11 @@ export function isRemarksToken(text) {
 // and the title words ("Result", "Status") are printed captions in every case.
 // Judging a header on these alone means re-opening a part-filled form cannot
 // mistake its own answers for headings.
+//
+// The paired forms include "OK/Not OK" (the fuel procedure's "Result OK/Not
+// OK" column), "OK/NOK" and "Yes/No".
 const RX_STATUS_HEADER =
-  /^(?:[a-z]+\s+)?(?:ok|pass)\s*\/\s*(?:fail|n\/?a)\b|^(?:result|status|condition|outcome)$/i
+  /^(?:[a-z]+\s+)?(?:ok|pass|yes)\s*\/\s*(?:fail|n\/?a|not\s*ok|nok|no)\b|^(?:result|status|condition|outcome)$/i
 
 export function isStatusHeaderToken(text) {
   return RX_STATUS_HEADER.test(norm(text))

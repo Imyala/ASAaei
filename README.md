@@ -320,18 +320,28 @@ npm test                 # unit tests
   either way.
 - **Auto-detect fields (Word *and* PDF):** the app pre-places the fields and drops you into fill
   mode. It reads the document's **actual ruled boxes** and puts a field inside each empty one,
-  classifying each (OK/Fail/N/A tap-cell for status columns, text for wider cells and for any
-  box that asks for a figure — a "Voltage: Volts" row, a "Grading (1-5)" column — signature next
-  to a "Signature" label). Shaded rows keep their boxes. A prompt printed inside a cell ("Record
-  water added") gets a box beside it, and write-on lines ("Fuel start: ____Litres",
-  "Notes/Remarks:" over rows of dashes) get one too. PDFs with embedded form fields use those
-  directly. Detection re-runs on every open, so re-issued versions still fill. To see what the
-  detector finds in a PDF without opening the app: `npm run inspect-pdf form.pdf`.
+  classifying each (OK/Fail/N/A tap-cell for status columns — "1M±", "3M\*\*", "1Y",
+  "Result OK/Not OK", "Pass/Fail" — text for wider cells and for any box that asks for a figure,
+  such as a "Voltage: Volts" row or an "Actual Reading" column; a "Grading (1-5)" column taps
+  through 1–5; signature next to a "Signature" label). Shaded (grey) rows and columns keep their
+  boxes, and so do rows whose task text carries a link. A printed tick box "☐" becomes a tap-cell,
+  a cell holding only its unit ("V", "A", "Sec") gets a box before the unit, and a prompt printed
+  inside a cell ("Record water added", "Comments:") gets a box beside or under it. Write-on lines
+  get boxes level with their labels: "Fuel start: ____Litres", "Genset:...... Work Order
+  Number:......", "Site:" with its line out at a tab stop, "Notes/Remarks:" over rows of dashes.
+  Every box sits inside its own cell. PDFs with embedded form fields use those directly.
+  Detection re-runs on every open, so re-issued versions still fill. To see what the detector
+  finds in a PDF without opening the app: `npm run inspect-pdf form.pdf`.
 - **The page number stays put:** a Word document set up with mirrored odd/even footers (page
   number left on one page, right on the next) is converted with the same footer on every page.
 - **Tap OK / Fail / N/A:** status cells are a single tap-cycle — blank → **OK** → **N/A** →
   **Fail** → blank — so a whole column is a few taps, no dropdowns. A column headed *Pass/Fail*
   taps through **Pass / N/A / Fail** instead, matching the form's own wording.
+- **Type on all pages:** the toolbar button turns every tap-cell in the document into a box to
+  type in (and back again). Each page still has its own *123 Manual entry* switch for one page
+  at a time.
+- **Values fit their boxes:** the text in a box is sized from the box, and on download a long
+  entry wraps (tall boxes) or shrinks (short ones) so it never runs over the next cell.
 - **Profile autofill:** set your name + SAP ID once in Settings; every form opens with your name,
   SAP ID and today's date already filled in.
 - **Page picker:** keep only the pages you fill, and drag to reorder.

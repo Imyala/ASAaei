@@ -1,5 +1,5 @@
 // Node test for the pure grid logic (no pdfjs). Run: node src/pdfGrid.test.mjs
-import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent } from './pdfGrid.js'
+import { buildCells, cellsToFields, cellHasText, dedupeCells, detectPageFields, blankLineFields, runExtent, MAX_FIELDS_PER_PAGE, gradeScale } from './pdfGrid.js'
 
 let pass = 0, fail = 0
 const ok = (cond, msg) => { if (cond) { pass++ } else { fail++; console.error('  ✗ ' + msg) } }
@@ -201,12 +201,13 @@ console.log('a row label still beats the column heading')
 
 console.log('one dense page cannot starve the rest of the document')
 {
-  // 600 empty cells on a single page: the page is capped, but the cap is per
-  // page, so it returns rather than aborting a document-wide walk.
+  // More empty cells than the cap on a single page: the page is capped, but
+  // the cap is per page, so it returns rather than aborting a document-wide walk.
   const cells = []
-  for (let i = 0; i < 600; i++) cells.push({ x: 60 + (i % 4) * 130, y: 100 + Math.floor(i / 4) * 2, w: 120, h: 20 })
-  const fields = cellsToFields(cells, cells.length ? [] : [], PW, PH, 3)
-  ok(fields.length > 0 && fields.length <= 250, `page capped at 250 fields (got ${fields.length})`)
+  const n = MAX_FIELDS_PER_PAGE + 200
+  for (let i = 0; i < n; i++) cells.push({ x: 60 + (i % 4) * 130, y: 100 + Math.floor(i / 4) * 2, w: 120, h: 20 })
+  const fields = cellsToFields(cells, [], PW, PH, 3)
+  ok(fields.length > 0 && fields.length <= MAX_FIELDS_PER_PAGE, `page capped at ${MAX_FIELDS_PER_PAGE} fields (got ${fields.length})`)
   ok(fields.every((f) => f.page === 3), 'every field stays on its own page')
 }
 
@@ -448,9 +449,10 @@ console.log('rows that ask for a reading are typed, not tapped')
   const fields2 = cellsToFields(cells2, texts2, PW, PH, 0)
   ok(fields2.length === 6, `the three answer columns fill on both rows (got ${fields2.length})`)
   const grading = fields2.filter((f) => f.label === 'Grading (1-5)')
-  ok(grading.length === 2 && grading.every((f) => f.type === 'text'), 'Grading is typed and carries its heading')
-  ok(fields2.filter((f) => f.label === 'Actual Reading' && f.type === 'text').length === 2, 'so is Actual Reading')
-  const pf = fields2.filter((f) => f.type === 'status')
+  ok(grading.length === 2 && grading.every((f) => f.type === 'status' && f.options.join() === '1,2,3,4,5'),
+    'Grading taps through its printed 1-5 scale and carries its heading')
+  ok(fields2.filter((f) => f.label === 'Actual Reading' && f.type === 'text').length === 2, 'Actual Reading is typed')
+  const pf = fields2.filter((f) => f.type === 'status' && f.label !== 'Grading (1-5)')
   ok(pf.length === 2 && pf.every((f) => f.options[0] === 'Pass'), 'Pass/Fail stays a tap-cell with Pass/Fail wording')
   ok(fields2.every((f) => f.yPct * PH > 105), 'the "Condition" row-label heading does not make the data rows header rows')
 }
@@ -532,6 +534,167 @@ console.log('runExtent — where a run sits along its token')
   ok(x1 > 40 && x2 === 100, `the underscores end where the token ends (got ${x1.toFixed(1)}..${x2.toFixed(1)})`)
   const [a1, a2] = runExtent('____Litres', 0, 4, 100, 143)
   ok(a1 === 100 && a2 < 125, `leading underscores start at the token's left edge (got ${a1}..${a2.toFixed(1)})`)
+}
+
+
+console.log('a link underline in the task column does not cost the row its boxes')
+{
+  // Day Tank / B.2 shape: [clause | task | 1M | Result] with rows 100-140-180;
+  // the clause number "9.1.1" is a link, so a short underline is drawn at
+  // y=112 under it — inside the first column only.
+  const xs = [50, 100, 300, 340, 400]
+  const hlines = [100, 140, 180].map((y) => ({ y, x1: 50, x2: 400 }))
+  hlines.push({ y: 112, x1: 53, x2: 80 }) // the underline
+  const vlines = xs.map((x) => ({ x, y1: 100, y2: 180 }))
+  const cells = buildCells(hlines, vlines, [], PW, PH)
+  const answer = cells.filter((c) => c.x === 300 || c.x === 340)
+  ok(answer.length === 4, `both answer columns close on both rows (got ${answer.length})`)
+  ok(answer.every((c) => c.h === 40), 'each spans its whole row')
+}
+
+console.log('a merged cell beside split sub-rows is still a cell')
+{
+  // "Grading (1-5)" spans two sub-rows; the columns either side are split.
+  const hlines = [{ y: 100, x1: 50, x2: 250 }, { y: 200, x1: 50, x2: 250 },
+    { y: 150, x1: 50, x2: 150 }, { y: 150, x1: 200, x2: 250 }]
+  const vlines = [50, 150, 200, 250].map((x) => ({ x, y1: 100, y2: 200 }))
+  const cells = buildCells(hlines, vlines, [], PW, PH)
+  ok(cells.some((c) => c.x === 150 && c.y === 100 && c.h === 100), 'the merged middle cell is found')
+  ok(cells.filter((c) => c.x === 50).length === 2 && cells.filter((c) => c.x === 200).length === 2, 'the split cells either side are too')
+}
+
+console.log('the cells of a small table nested in a text cell are kept')
+{
+  // "Where applicable, record the following values:" over a two-row
+  // label | value table, all inside one Action Taken cell.
+  const outer = { x: 400, y: 100, w: 160, h: 100 }
+  const nested = [
+    { x: 400, y: 140, w: 110, h: 20 }, { x: 510, y: 140, w: 50, h: 20 },
+    { x: 400, y: 160, w: 110, h: 20 }, { x: 510, y: 160, w: 50, h: 20 },
+  ]
+  const others = [{ x: 50, y: 100, w: 350, h: 100 }, { x: 50, y: 200, w: 350, h: 40 }, { x: 400, y: 200, w: 160, h: 40 }]
+  const texts = [T('Where applicable, record the', 404, 540, 112, 8), T('Instrument reading:', 404, 490, 153, 8), T('HMI reading:', 404, 460, 173, 8)]
+  const kept = dedupeCells([outer, ...nested, ...others], texts)
+  ok(nested.every((n) => kept.includes(n)), `nested cells survive (got ${kept.length})`)
+  const fields = detectPageFields({ cells: kept, texts, pw: PW, ph: PH, pageIndex: 0 })
+  const inNested = fields.filter((f) => f.yPct * PH > 139 && f.yPct * PH < 181)
+  ok(inNested.length === 2 && inNested.every((f) => f.xPct * PW > 509), `one box per reading, in the value cells (got ${inNested.map((f) => (f.xPct * PW).toFixed(0)).join(',')})`)
+}
+
+console.log('footnoted frequency columns and "Result OK/Not OK" are tap-cells')
+{
+  const heads = ['Clause No.', 'Tasks', '1M±', '3M**', '1Y', 'Result OK/Not OK', 'Action Taken']
+  const xs = [50, 90, 260, 295, 330, 360, 420], ws = [40, 170, 35, 35, 30, 60, 130]
+  const cells = [], texts = []
+  for (let r = 0; r < 4; r++) for (let c = 0; c < xs.length; c++) cells.push({ x: xs[c], y: 100 + r * 30, w: ws[c], h: 30 })
+  heads.forEach((h, c) => texts.push(T(h, xs[c] + 3, xs[c] + ws[c] - 3, 112, 8)))
+  for (let r = 1; r < 4; r++) texts.push(T(`9.1.${r}`, 53, 75, 112 + r * 30, 8), T('Check for leaks and rectify.', 93, 200, 112 + r * 30, 8))
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  const tap = fields.filter((f) => f.type === 'status')
+  ok(tap.length === 12, `1M, 3M, 1Y and Result tap on every row (got ${tap.length})`)
+  ok(fields.filter((f) => f.type === 'text').length === 3, 'Action Taken is typed')
+  ok(fields.every((f) => f.yPct * PH > 129), 'the heading row gets nothing')
+}
+
+console.log('write-on lines: a far-off caption, labels inside one token, codes')
+{
+  // Appendix C: "Site:" at the margin, its rule starting at a tab stop far
+  // to the right, and a box level with the label rather than below it.
+  const texts = [
+    T('Site:', 68, 88, 104.6, 10), T('Genset Equipment #:', 68, 167, 127.8, 10),
+    T('Genset:.................. Work Order Number:.................. SAP Equipment Number:..................', 74, 520, 300, 9),
+    T('AD__-ASAC-TMC_-____-AIU___', 99, 179, 400, 6),
+  ]
+  const hlines = [{ y: 110.9, x1: 190, x2: 565 }, { y: 134, x1: 190, x2: 565 }]
+  const fields = blankLineFields(texts, hlines, [], 842, 595, 0)
+  const site = fields.find((f) => f.label === 'Site')
+  ok(!!site, 'the "Site:" line gets a box')
+  const genset = fields.find((f) => f.label === 'Genset Equipment #')
+  ok(genset && genset.yPct * 595 <= 127.8 - 9, `the box rises level with its label (top ${genset && (genset.yPct * 595).toFixed(1)})`)
+  ok(genset && genset.yPct * 595 > site.yPct * 595 + site.hPct * 595 - 0.5, 'and stops at the line above')
+  const labels = fields.map((f) => f.label)
+  ok(labels.includes('Work Order Number') && labels.includes('SAP Equipment Number') && labels.includes('Genset'),
+    `each blank in one token is labelled by its own words (got ${labels.join(' | ')})`)
+  ok(!fields.some((f) => f.yPct * 595 > 390 && f.yPct * 595 < 402), 'the underscores inside a site code are not a blank')
+}
+
+console.log('the rule over a page footer is not a write-on line')
+{
+  const texts = [T('Remarks/Derating:______________________________', 60, 400, 770, 10), T('AEI 3.3301', 60, 100, 802, 8)]
+  const hlines = [{ y: 788, x1: 60, x2: 540 }]
+  const fields = blankLineFields(texts, hlines, [], 595, 842, 0)
+  ok(fields.length === 1 && fields[0].label === 'Remarks/Derating', `only the remarks line gets a box (got ${fields.length})`)
+}
+
+console.log('tick boxes and printed units')
+{
+  const cells = [
+    { x: 50, y: 100, w: 200, h: 25 }, { x: 250, y: 100, w: 150, h: 25 }, { x: 400, y: 100, w: 40, h: 25 },
+    { x: 50, y: 125, w: 200, h: 25 }, { x: 250, y: 125, w: 30, h: 25 }, { x: 280, y: 125, w: 160, h: 25 },
+  ]
+  const texts = [
+    T('Inspect contactors', 54, 150, 116, 8), T('OK', 254, 266, 116, 8), T('☐', 417, 423, 116, 8),
+    T('Measure Mains Voltage', 54, 160, 141, 8), T('R:', 254, 262, 141, 8), T('V', 432, 437, 141, 8),
+  ]
+  const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
+  const tick = fields.find((f) => f.type === 'status')
+  ok(tick && tick.covers && Math.abs(tick.xPct * PW - 401.5) < 0.1, 'a printed ☐ becomes a tap-cell over it')
+  const volts = fields.find((f) => f.type === 'text' && f.yPct * PH > 124)
+  ok(volts && volts.xPct * PW + volts.wPct * PW <= 431 && volts.wPct * PW > 100, 'a unit cell gets a box before the unit')
+  ok(volts && /R.*\(V\)/.test(volts.label), `labelled with the row and unit (got ${volts && volts.label})`)
+}
+
+console.log('prompt boxes only where the answer has nowhere else to go')
+{
+  const cells = [
+    { x: 50, y: 100, w: 40, h: 60 }, { x: 90, y: 100, w: 200, h: 60 }, { x: 290, y: 100, w: 110, h: 20 }, { x: 400, y: 100, w: 60, h: 20 },
+    { x: 290, y: 120, w: 110, h: 20 }, { x: 400, y: 120, w: 60, h: 20 }, { x: 290, y: 140, w: 170, h: 20 },
+    { x: 50, y: 160, w: 40, h: 40 }, { x: 90, y: 160, w: 200, h: 40 }, { x: 290, y: 160, w: 170, h: 40 },
+  ]
+  const texts = [
+    T('9.1.5', 53, 75, 112, 8), T('Maintain fuel inventory record.', 93, 250, 112, 8),
+    T('HMI reading:', 293, 345, 113, 8), T('Dip reading:', 293, 342, 133, 8),
+    T('9.1.8', 53, 75, 172, 8), T('Check tank for water. Either:', 93, 220, 172, 8),
+    T('Fault Number if required:', 293, 395, 172, 8),
+  ]
+  const fields = detectPageFields({ cells, texts, pw: PW, ph: PH, pageIndex: 0 })
+  ok(!fields.some((f) => f.xPct * PW > 290 && f.xPct * PW < 399 && f.yPct * PH < 140), 'no second box beside "HMI reading:"')
+  ok(fields.filter((f) => f.xPct * PW > 399 && f.yPct * PH < 140).length === 2, 'the value cells have theirs')
+  ok(!fields.some((f) => f.label.startsWith('Check tank')), 'a task introducing a list is not a prompt')
+  ok(fields.some((f) => f.label === 'Fault Number if required'), 'a caption in the last column still gets a box')
+}
+
+console.log('icons and gutter columns are not answer boxes')
+{
+  const cells = []
+  for (let r = 0; r < 6; r++) { cells.push({ x: 50, y: 100 + r * 20, w: 60, h: 20 }, { x: 110, y: 100 + r * 20, w: 300, h: 20 }) }
+  cells.push({ x: 410, y: 100, w: 20, h: 120 }) // a blank margin column down the whole list
+  cells.push({ x: 50, y: 240, w: 50, h: 60 }, { x: 100, y: 240, w: 330, h: 60 }) // icon | warning
+  const texts = []
+  for (let r = 0; r < 6; r++) texts.push(T(`10000${r}`, 54, 90, 114 + r * 20, 8), T(`AD__-APT_-CTC_-PH__-GSET__ ${r}`, 114, 250, 114 + r * 20, 8))
+  texts.push(T('FIRE AND COMBUSTION', 200, 320, 260, 8))
+  const images = [{ x: 63, y: 258, w: 24, h: 23 }]
+  const fields = cellsToFields(cells, texts, PW, PH, 0, images)
+  ok(fields.length === 0, `neither the hazard icon's cell nor the gutter gets a box (got ${fields.length})`)
+}
+
+console.log('grading scales')
+{
+  ok(gradeScale('Grading (1-5)').join() === '1,2,3,4,5', 'Grading (1-5)')
+  ok(gradeScale('Score 1 to 10').length === 10, 'Score 1 to 10')
+  ok(gradeScale('Actual Reading') === null && gradeScale('Oil Press. 1-2: kPa') === null, 'not a reading or a range of other things')
+}
+
+console.log('the whole performance test run table fits on its page')
+{
+  const cells = [], texts = []
+  for (let r = 0; r < 43; r++) {
+    cells.push({ x: 60, y: 90 + r * 15, w: 100, h: 15 })
+    texts.push(T(`Cyl ${r} Exhaust Temp: °C`, 63, 150, 101 + r * 15, 7))
+    for (let c = 0; c < 12; c++) cells.push({ x: 160 + c * 32, y: 90 + r * 15, w: 32, h: 15 })
+  }
+  const fields = cellsToFields(cells, texts, PW, PH, 0)
+  ok(fields.length === 516, `all 516 reading cells get a box (got ${fields.length})`)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)
