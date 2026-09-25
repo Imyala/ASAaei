@@ -390,7 +390,11 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   // heading above it or the same choice in other rows. Read as a heading, it
   // made its whole row a header row: on the distribution procedure's
   // Appendix G-K checklists some seventy rows had no tap and no Comments box.
-  const rowOf = (c) => cells.filter((o) => o !== c && Math.min(o.y + o.h, c.y + c.h) - Math.max(o.y, c.y) >= 0.5 * Math.min(o.h, c.h))
+  const rowCache = new Map()
+  const rowOf = (c) => {
+    if (!rowCache.has(c)) rowCache.set(c, cells.filter((o) => o !== c && Math.min(o.y + o.h, c.y + c.h) - Math.max(o.y, c.y) >= 0.5 * Math.min(o.h, c.h)))
+    return rowCache.get(c)
+  }
   const sameCol = (o, c) => Math.min(o.x + o.w, c.x + c.w) - Math.max(o.x, c.x) >= 0.6 * Math.min(o.w, c.w)
   const choiceCache = new Map()
   const printedChoice = (c) => {
@@ -575,10 +579,13 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   // A column's title: the text of the nearest header-row cell above it
   // (headerFor gives the nearest text of any kind, which in a column of
   // printed limits is the "N/A" of the row before).
+  const titleCache = new Map()
   const titleOf = (c) => {
+    if (titleCache.has(c)) return titleCache.get(c)
     const t = cells.filter((o) => o !== c && o.y + o.h <= c.y + 2 && sameCol(o, c) && inHeaderRow(o) && textIn(o))
       .sort((a, b) => b.y - a.y)[0]
-    return t ? textIn(t) : ''
+    titleCache.set(c, t ? textIn(t) : '')
+    return titleCache.get(c)
   }
   // The same, reached up the column through cells that touch — so it is
   // this table's own heading row, not one of a table above ("Notes" lines
