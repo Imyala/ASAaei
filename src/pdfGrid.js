@@ -237,9 +237,11 @@ export function detectPageFields({ cells, texts, hlines = [], pw, ph, pageIndex,
     const fr = { x: f.xPct * pw, y: f.yPct * ph, w: f.wPct * pw, h: f.hPct * ph }
     return rectOverlap(fr, r) > 0.5 * r.w * r.h
   })
+  const reference = referenceRegions(cells, texts)
   const add = (f) => {
     if (out.length >= MAX_FIELDS_PER_PAGE) return
-    if (taken({ x: f.xPct * pw, y: f.yPct * ph, w: f.wPct * pw, h: f.hPct * ph })) return
+    const r = { x: f.xPct * pw, y: f.yPct * ph, w: f.wPct * pw, h: f.hPct * ph }
+    if (taken(r) || inRegion(reference, r)) return
     out.push(f)
   }
   if (cells.length >= 4) {
@@ -312,10 +314,58 @@ export function inheritColumnKinds(fields, tol = 0.004) {
   return fields.map((f) => out.get(f))
 }
 
+// Tables that are read, never filled in: the maintenance schedule every
+// procedure carries ("Maintenance Table *Refer PROC-151 for table
+// attributes" — Line No, Interval, Tolerance, TechCert, Strategy, Spare,
+// Audit…) and the equipment lists inside it (Equipment | Functional Loc.,
+// with blank slots at the end). Their blank Audit and Scheduling cells and
+// unused list slots had boxes that looked like things to fill in. Each is
+// found by its caption or its heading row, and runs down its rows for as
+// long as they follow on from one another.
+const SCHEDULE_HEAD = /^(?:line\s*no\.?|maintenance type|interval|tolerance|techcert|strategy|spare|works\s*plan|audit|scheduling conditions.*|hours to complete.*)$/i
+const SCHEDULE_ONLY = /^(?:techcert|strategy|audit|scheduling conditions.*)$/i
+export function referenceRegions(cells, texts) {
+  if (cells.length < 4) return []
+  const textOf = (c) => textInside(c, texts)
+  const seeds = []
+  for (const c of cells) {
+    if (/^maintenance table\b/i.test(textOf(c))) seeds.push({ x1: c.x, x2: c.x + c.w, y: c.y, bottom: c.y + c.h })
+  }
+  const bands = new Map()
+  for (const c of cells) {
+    const k = Math.round(c.y / 4)
+    if (!bands.has(k)) bands.set(k, [])
+    bands.get(k).push(c)
+  }
+  for (const row of bands.values()) {
+    const heads = row.map(textOf)
+    const schedule = heads.filter((t) => SCHEDULE_HEAD.test(t))
+    const lists = heads.filter((t) => /^functional loc/i.test(t))
+    if ((schedule.length >= 3 && schedule.some((t) => SCHEDULE_ONLY.test(t))) || lists.length >= 2) {
+      seeds.push({ x1: Math.min(...row.map((c) => c.x)), x2: Math.max(...row.map((c) => c.x + c.w)), y: Math.min(...row.map((c) => c.y)), bottom: Math.max(...row.map((c) => c.y + c.h)) })
+    }
+  }
+  return seeds.map((s) => {
+    const inside = cells.filter((c) => c.x >= s.x1 - 2 && c.x + c.w <= s.x2 + 2 && c.y >= s.y - 2).sort((a, b) => a.y - b.y)
+    let bottom = s.bottom
+    // (rows can stand a few points apart: Word's cell spacing)
+    for (const c of inside) {
+      if (c.y > bottom + 6) break
+      bottom = Math.max(bottom, c.y + c.h)
+    }
+    return { x: s.x1, y: s.y, w: s.x2 - s.x1, h: bottom - s.y }
+  })
+}
+const inRegion = (regions, r) => {
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2
+  return regions.some((g) => cx > g.x - 2 && cx < g.x + g.w + 2 && cy > g.y - 2 && cy < g.y + g.h + 2)
+}
+
 // Turn empty cells into fields, classified by width and column header.
 export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
   if (rawCells.length < 4) return [] // not a form grid on this page
-  const cells = mergeSplitCells(rawCells, texts)
+  const reference = referenceRegions(rawCells, texts)
+  const cells = mergeSplitCells(rawCells, texts).filter((c) => !inRegion(reference, c))
   const out = []
   const median = medianOf(cells.map((c) => c.w)) || 40
   const textIn = cellTextLookup(cells, texts)
@@ -441,6 +491,12 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     const firstText = row.find(hasText)
     return !!firstText && firstText.x >= c.x + c.w - 2 && row.every((o) => o.x >= c.x || !hasText(o))
   }
+  // An unused slot at the end of an equipment list: its row is equipment
+  // numbers and SAP functional locations ("100084288 | AD__-APT_-CTN_-____-
+  // GSET__"), even where the page carries neither the list's caption nor
+  // its heading.
+  const FLOC = /^[A-Z]{2,4}_*-[A-Z0-9]{2,6}_*-/
+  const listSlot = (c) => rowOf(c).filter((o) => FLOC.test(textIn(o)) || /^\d{5,9}$/.test(textIn(o))).length >= 2
   // A column's title: the text of the nearest header-row cell above it
   // (headerFor gives the nearest text of any kind, which in a column of
   // printed limits is the "N/A" of the row before).
@@ -542,6 +598,7 @@ export function cellsToFields(rawCells, texts, pw, ph, pageIndex, images = []) {
     }
     if (!statusHeading && strayInTextColumn(c)) continue
     if (splitRowTail(c)) continue
+    if (listSlot(c)) continue
     // the row label sits to the left of the cell on the same row — use it as
     // the field label so profile autofill (SAP ID, name, date) still works
     const rowLabel = rowLabelFor(c)
@@ -1177,6 +1234,9 @@ export function blankLineFields(texts, hlines, cells, pw, ph, pageIndex) {
       // of phase R, in amps.)
       const code = !/\s/.test(str) && !/^[.\u2026\u00b7]+$/.test(m[0])
       if (wedged && (after.length > 8 || m[0].length <= 4 || code)) continue
+      // a location code wrapped over two lines — "DN__-SHBA-RX__-" then
+      // "____-BES___" — is a code from end to end
+      if (code && /-/.test(str) && /[A-Za-z]{2}/.test(str) && /_/.test(m[0])) continue
       // Dots leading to a page number are a table of contents ("Purpose
       // ........ 5"), not a line to write on: every entry of both big
       // procedures' contents pages had a box over its leader.
